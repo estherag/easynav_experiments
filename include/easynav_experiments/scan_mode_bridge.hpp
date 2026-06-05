@@ -15,7 +15,6 @@
 #ifndef EASYNAV_EXPERIMENTS__SCAN_MODE_BRIDGE_HPP_
 #define EASYNAV_EXPERIMENTS__SCAN_MODE_BRIDGE_HPP_
 
-
 #include <mutex>
 
 #include "geometry_msgs/msg/twist.hpp"

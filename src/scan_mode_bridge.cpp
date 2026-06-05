@@ -50,26 +50,25 @@ ScanModeBridge::ScanModeBridge(const rclcpp::NodeOptions & options)
   get_parameter("stop_ang_eps", stop_ang_eps_);
 
   if (!std::isfinite(dist_blocked_) || dist_blocked_ < 0.0f) {
-    RCLCPP_WARN(get_logger(),
-      "Invalid parameter dist_blocked=%.6f; using default 0.05",
-      dist_blocked_);
+    RCLCPP_WARN(get_logger(), "Invalid parameter dist_blocked=%.6f; using default 0.05",
+        dist_blocked_);
     dist_blocked_ = 0.35f;
   }
 
-  scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>(
-    "scan_bridged", rclcpp::SensorDataQoS());
+  scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>("scan_bridged",
+      rclcpp::SensorDataQoS());
 
   scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-    "scan_raw", rclcpp::SensorDataQoS(),
-    std::bind(&ScanModeBridge::on_scan, this, std::placeholders::_1));
+      "scan_raw", rclcpp::SensorDataQoS(),
+      std::bind(&ScanModeBridge::on_scan, this, std::placeholders::_1));
 
   cmd_vel_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-    "cmd_vel", rclcpp::SystemDefaultsQoS(),
-    std::bind(&ScanModeBridge::on_cmd_vel, this, std::placeholders::_1));
+      "cmd_vel", rclcpp::SystemDefaultsQoS(),
+      std::bind(&ScanModeBridge::on_cmd_vel, this, std::placeholders::_1));
 
   trigger_srv_ = create_service<std_srvs::srv::Trigger>(
-    "trigger_mode",
-    std::bind(&ScanModeBridge::on_trigger_mode, this, std::placeholders::_1,
+      "trigger_mode",
+      std::bind(&ScanModeBridge::on_trigger_mode, this, std::placeholders::_1,
       std::placeholders::_2));
 
   RCLCPP_INFO(get_logger(), "Started in mode: %s", mode_to_string(mode_));
@@ -91,8 +90,7 @@ void ScanModeBridge::on_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     if (stop_measurement_active_ && !stop_measurement_started_) {
       stop_measurement_start_time_ = steady_clock_.now();
       stop_measurement_started_ = true;
-      RCLCPP_INFO(get_logger(),
-        "Stop-timer started (mode=BLOCKED)");
+      RCLCPP_INFO(get_logger(), "Stop-timer started (mode=BLOCKED)");
     }
   }
 
@@ -111,14 +109,12 @@ void ScanModeBridge::on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
     return;
   }
 
-  const double lin = std::sqrt(
-    msg->linear.x * msg->linear.x +
-    msg->linear.y * msg->linear.y +
-    msg->linear.z * msg->linear.z);
-  const double ang = std::sqrt(
-    msg->angular.x * msg->angular.x +
-    msg->angular.y * msg->angular.y +
-    msg->angular.z * msg->angular.z);
+  const double lin =
+    std::sqrt(msg->linear.x * msg->linear.x + msg->linear.y * msg->linear.y + msg->linear.z *
+      msg->linear.z);
+  const double ang =
+    std::sqrt(msg->angular.x * msg->angular.x + msg->angular.y * msg->angular.y + msg->angular.z *
+      msg->angular.z);
 
   const bool stopped = (lin <= stop_lin_eps_) && (ang <= stop_ang_eps_);
   if (!stopped) {
@@ -129,8 +125,8 @@ void ScanModeBridge::on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
   const auto dt = end_time - stop_measurement_start_time_;
   const int64_t dt_us = dt.nanoseconds() / 1000;
   RCLCPP_INFO(get_logger(),
-    "Robot stop detected after %" PRId64 " us (lin=%.4f, ang=%.4f; eps=(%.4f, %.4f))",
-    dt_us, lin, ang, stop_lin_eps_, stop_ang_eps_);
+      "Robot stop detected after %" PRId64 " us (lin=%.4f, ang=%.4f; eps=(%.4f, %.4f))", dt_us,
+              lin, ang, stop_lin_eps_, stop_ang_eps_);
 
   stop_measurement_active_ = false;
 }

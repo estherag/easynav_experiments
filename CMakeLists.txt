@@ -50,7 +50,7 @@ install(
 )
 
 install(
-  DIRECTORY launch config maps params results
+  DIRECTORY launch config maps params results rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

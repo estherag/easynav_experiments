@@ -13,20 +13,19 @@
 # limitations under the License.
 
 # Usage:
-#   ros2 launch easynav_experiments benchmark.launch.py nav_mode:=nav2 goal:=goal_1
-#   ros2 launch easynav_experiments benchmark.launch.py nav_mode:=easynav goal:=goal_2 run_id:=3
+# ros2 launch easynav_experiments benchmark.launch.py nav_mode:=nav2
+# goal:=goal_1
 
 import math
 import os
+import subprocess
 
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
-                            IncludeLaunchDescription, OpaqueFunction, TimerAction)
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+                            OpaqueFunction, TimerAction)
 from launch_ros.actions import Node
+import yaml
 
 
 def _yaw_to_quat(yaw_rad):
@@ -37,55 +36,31 @@ def _yaw_to_quat(yaw_rad):
 
 def _setup(context, *args, **kwargs):
     """OpaqueFunction: resolves nav_mode-dependent paths and builds all runtime actions."""
-    easynav_dir = get_package_share_directory('easynav_indoor_testcase')
-    experiments_dir = get_package_share_directory('easynav_experiments')
+    nav_mode = context.launch_configurations['nav_mode']
+    goal_num = context.launch_configurations['goal']
+    target_pid = context.launch_configurations['target_pid']
+    output_dir = context.launch_configurations['output_dir']
+    goals_file = context.launch_configurations['goals_file']
+    goal_key = 'goal_%s' % goal_num
 
-    nav_mode   = context.launch_configurations['nav_mode']
-    run_id     = context.launch_configurations['run_id']
-    target_pid  = context.launch_configurations['target_pid']
-    output_dir  = context.launch_configurations['output_dir']
-    goals_file  = context.launch_configurations['goals_file']
-    goal_key   = 'goal_%s' % context.launch_configurations['goal']
-
-    # ── params_file: use override if given, else pick default by nav_mode ──
-    params_file = context.launch_configurations.get('params_file', '')
-    if not params_file:
-        if nav_mode == 'easynav':
-            params_file = os.path.join(
-                easynav_dir, 'robots_params', 'simple.params.yaml')
-        else:
-            try:
-                nav2_dir = get_package_share_directory('nav2_bringup')
-                params_file = os.path.join(nav2_dir, 'params', 'nav2_params.yaml')
-            except Exception:
-                params_file = ''
+    # ── Auto-detect PID if not provided ──
+    if int(target_pid) <= 0:
+        process_name = 'system_main' if nav_mode == 'easynav' else 'component_container_isolated'
+        try:
+            result = subprocess.check_output(
+                ['pgrep', '-f', process_name], text=True).strip()
+            target_pid = result.splitlines()[0]
+        except subprocess.CalledProcessError:
+            target_pid = '-1'
 
     actions = []
 
-    if nav_mode == 'easynav':
-        actions.append(Node(
-            package='easynav_system',
-            executable='system_main',
-            parameters=[params_file],
-            output='screen',
-        ))
-    else:
-        try:
-            nav2_dir = get_package_share_directory('nav2_bringup')
-            actions.append(IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    os.path.join(nav2_dir, 'launch', 'bringup_launch.py')),
-                launch_arguments={'params_file': params_file}.items(),
-            ))
-        except Exception:
-            raise RuntimeError('nav2_bringup not found but nav_mode:=nav2 was requested')
-
     actions.append(Node(
         package='easynav_experiments',
-        executable='nav_metrics',
+        executable='benchmark_evaluator',
         parameters=[{
             'nav_mode': nav_mode,
-            'run_id': int(run_id),
+            'run_id': int(goal_num),
             'target_pid': int(target_pid),
             'output_dir': output_dir,
         }],
@@ -104,18 +79,18 @@ def _setup(context, *args, **kwargs):
     x, y, yaw = float(g['x']), float(g['y']), float(g['yaw'])
     qz, qw = _yaw_to_quat(yaw)
 
-    pose_str = (
-        f'{{header: {{frame_id: map}}, '
+    shell_cmd = (
+        f'ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped '
+        f'"{{header: {{stamp: {{sec: $(date +%s), nanosec: 0}}, frame_id: map}}, '
         f'pose: {{position: {{x: {x}, y: {y}, z: 0.0}}, '
-        f'orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}'
+        f'orientation: {{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}"'
     )
 
     actions.append(TimerAction(
         period=2.0,
         actions=[
             ExecuteProcess(
-                cmd=['ros2', 'topic', 'pub', '--once',
-                     '/goal_pose', 'geometry_msgs/msg/PoseStamped', pose_str],
+                cmd=['bash', '-c', shell_cmd],
                 output='screen',
             )
         ],
@@ -126,8 +101,11 @@ def _setup(context, *args, **kwargs):
 
 def generate_launch_description():
 
-    easynav_dir = get_package_share_directory('easynav_indoor_testcase')
     experiments_dir = get_package_share_directory('easynav_experiments')
+
+    # __file__ is always the source file, regardless of install layout
+    pkg_src_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    src_results_dir = os.path.join(pkg_src_dir, 'results')
 
     declare_nav_mode = DeclareLaunchArgument(
         'nav_mode',
@@ -141,25 +119,10 @@ def generate_launch_description():
         description='Goal number (integer). The launch looks up goal_<N> in benchmark_goals.yaml',
     )
 
-    declare_run_id = DeclareLaunchArgument(
-        'run_id',
-        default_value='0',
-        description='Run identifier — appended to the output JSON filename',
-    )
-
     declare_target_pid = DeclareLaunchArgument(
         'target_pid',
         default_value='-1',
         description='PID of the navigation process to monitor (CPU/RAM)',
-    )
-
-    declare_params_file = DeclareLaunchArgument(
-        'params_file',
-        default_value='',
-        description=(
-            'Full path to the navigation params YAML. '
-            'If empty, the default for the selected nav_mode is used: '
-            'easynav → simple.params.yaml, nav2 → nav2_params.yaml'),
     )
 
     declare_goals_file = DeclareLaunchArgument(
@@ -171,16 +134,14 @@ def generate_launch_description():
 
     declare_output_dir = DeclareLaunchArgument(
         'output_dir',
-        default_value=os.path.join(experiments_dir, 'results'),
-        description='Directory where nav_metrics_<run_id>.json files are saved',
+        default_value=src_results_dir,
+        description='Directory where benchmark_evaluator_<goal>.json files are saved',
     )
 
     ld = LaunchDescription()
     ld.add_action(declare_nav_mode)
     ld.add_action(declare_goal)
-    ld.add_action(declare_run_id)
     ld.add_action(declare_target_pid)
-    ld.add_action(declare_params_file)
     ld.add_action(declare_output_dir)
     ld.add_action(declare_goals_file)
     ld.add_action(OpaqueFunction(function=_setup))

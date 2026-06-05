@@ -65,15 +65,19 @@ bool spin_until(
 }  // namespace
 
 class ScanModeBridgeTest : public ::testing::Test
-{};
+{
+};
 
 TEST_F(ScanModeBridgeTest, BridgesByDefault)
 {
   auto bridge_options = rclcpp::NodeOptions().arguments({
     "--ros-args",
-    "-r", "scan:=test_scan",
-    "-r", "scan_bridged:=test_scan_bridged",
-    "-r", "trigger_mode:=test_trigger_mode",
+    "-r",
+    "scan_raw:=test_scan",
+    "-r",
+    "scan_bridged:=test_scan_bridged",
+    "-r",
+    "trigger_mode:=test_trigger_mode",
   });
 
   auto bridge = std::make_shared<easynav_experiments::ScanModeBridge>(bridge_options);
@@ -86,14 +90,15 @@ TEST_F(ScanModeBridgeTest, BridgesByDefault)
   std::promise<sensor_msgs::msg::LaserScan> received_promise;
   auto received_future = received_promise.get_future();
   auto sub = harness->create_subscription<sensor_msgs::msg::LaserScan>(
-    "test_scan_bridged", 10,
+      "test_scan_bridged", rclcpp::SensorDataQoS(),
     [&received_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) {
       if (msg) {
         received_promise.set_value(*msg);
       }
-    });
+      });
 
-  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan", 10);
+  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan",
+    rclcpp::SensorDataQoS());
 
   ASSERT_TRUE(spin_until(exec, [&]() {return pub->get_subscription_count() > 0;}, 2s));
 
@@ -102,7 +107,8 @@ TEST_F(ScanModeBridgeTest, BridgesByDefault)
 
   ASSERT_TRUE(spin_until(exec, [&]() {
       return received_future.wait_for(0ms) == std::future_status::ready;
-    }, 2s));
+                                                                                                        },
+    2s));
 
   const auto out = received_future.get();
   ASSERT_EQ(out.ranges.size(), input.ranges.size());
@@ -118,9 +124,12 @@ TEST_F(ScanModeBridgeTest, BlocksAfterTrigger)
 {
   auto bridge_options = rclcpp::NodeOptions().arguments({
     "--ros-args",
-    "-r", "scan:=test_scan",
-    "-r", "scan_bridged:=test_scan_bridged",
-    "-r", "trigger_mode:=test_trigger_mode",
+    "-r",
+    "scan_raw:=test_scan",
+    "-r",
+    "scan_bridged:=test_scan_bridged",
+    "-r",
+    "trigger_mode:=test_trigger_mode",
   });
 
   auto bridge = std::make_shared<easynav_experiments::ScanModeBridge>(bridge_options);
@@ -141,14 +150,15 @@ TEST_F(ScanModeBridgeTest, BlocksAfterTrigger)
   std::promise<sensor_msgs::msg::LaserScan> received_promise;
   auto received_future = received_promise.get_future();
   auto sub = harness->create_subscription<sensor_msgs::msg::LaserScan>(
-    "test_scan_bridged", 10,
+      "test_scan_bridged", rclcpp::SensorDataQoS(),
     [&received_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) {
       if (msg) {
         received_promise.set_value(*msg);
       }
-    });
+      });
 
-  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan", 10);
+  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan",
+    rclcpp::SensorDataQoS());
   ASSERT_TRUE(spin_until(exec, [&]() {return pub->get_subscription_count() > 0;}, 2s));
 
   const auto input = make_scan({10.0f, 10.0f, 10.0f, 1.0f});
@@ -156,7 +166,8 @@ TEST_F(ScanModeBridgeTest, BlocksAfterTrigger)
 
   ASSERT_TRUE(spin_until(exec, [&]() {
       return received_future.wait_for(0ms) == std::future_status::ready;
-    }, 2s));
+                                                                                                        },
+    2s));
 
   const auto out = received_future.get();
   ASSERT_EQ(out.ranges.size(), input.ranges.size());
@@ -172,9 +183,12 @@ TEST_F(ScanModeBridgeTest, ToggleBackToBridge)
 {
   auto bridge_options = rclcpp::NodeOptions().arguments({
     "--ros-args",
-    "-r", "scan:=test_scan",
-    "-r", "scan_bridged:=test_scan_bridged",
-    "-r", "trigger_mode:=test_trigger_mode",
+    "-r",
+    "scan_raw:=test_scan",
+    "-r",
+    "scan_bridged:=test_scan_bridged",
+    "-r",
+    "trigger_mode:=test_trigger_mode",
   });
 
   auto bridge = std::make_shared<easynav_experiments::ScanModeBridge>(bridge_options);
@@ -201,14 +215,15 @@ TEST_F(ScanModeBridgeTest, ToggleBackToBridge)
   std::promise<sensor_msgs::msg::LaserScan> received_promise;
   auto received_future = received_promise.get_future();
   auto sub = harness->create_subscription<sensor_msgs::msg::LaserScan>(
-    "test_scan_bridged", 10,
+      "test_scan_bridged", rclcpp::SensorDataQoS(),
     [&received_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) {
       if (msg) {
         received_promise.set_value(*msg);
       }
-    });
+      });
 
-  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan", 10);
+  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan",
+    rclcpp::SensorDataQoS());
   ASSERT_TRUE(spin_until(exec, [&]() {return pub->get_subscription_count() > 0;}, 2s));
 
   const auto input = make_scan({0.2f, 0.3f});
@@ -216,7 +231,8 @@ TEST_F(ScanModeBridgeTest, ToggleBackToBridge)
 
   ASSERT_TRUE(spin_until(exec, [&]() {
       return received_future.wait_for(0ms) == std::future_status::ready;
-    }, 2s));
+                                                                                                        },
+    2s));
 
   const auto out = received_future.get();
   ASSERT_EQ(out.ranges.size(), input.ranges.size());
@@ -231,10 +247,14 @@ TEST_F(ScanModeBridgeTest, BlocksWithCustomDistanceParameter)
 {
   auto bridge_options = rclcpp::NodeOptions().arguments({
     "--ros-args",
-    "-p", "dist_blocked:=0.12",
-    "-r", "scan:=test_scan",
-    "-r", "scan_bridged:=test_scan_bridged",
-    "-r", "trigger_mode:=test_trigger_mode",
+    "-p",
+    "dist_blocked:=0.12",
+    "-r",
+    "scan_raw:=test_scan",
+    "-r",
+    "scan_bridged:=test_scan_bridged",
+    "-r",
+    "trigger_mode:=test_trigger_mode",
   });
 
   auto bridge = std::make_shared<easynav_experiments::ScanModeBridge>(bridge_options);
@@ -257,21 +277,23 @@ TEST_F(ScanModeBridgeTest, BlocksWithCustomDistanceParameter)
   std::promise<sensor_msgs::msg::LaserScan> received_promise;
   auto received_future = received_promise.get_future();
   auto sub = harness->create_subscription<sensor_msgs::msg::LaserScan>(
-    "test_scan_bridged", 10,
+      "test_scan_bridged", rclcpp::SensorDataQoS(),
     [&received_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) {
       if (msg) {
         received_promise.set_value(*msg);
       }
-    });
+      });
 
-  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan", 10);
+  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan",
+    rclcpp::SensorDataQoS());
   ASSERT_TRUE(spin_until(exec, [&]() {return pub->get_subscription_count() > 0;}, 2s));
 
   pub->publish(make_scan({10.0f, 10.0f, 10.0f}));
 
   ASSERT_TRUE(spin_until(exec, [&]() {
       return received_future.wait_for(0ms) == std::future_status::ready;
-    }, 2s));
+                                                                                                        },
+    2s));
 
   const auto out = received_future.get();
   for (const auto & r : out.ranges) {
@@ -286,10 +308,14 @@ TEST_F(ScanModeBridgeTest, BlocksDistanceClampedToRangeMax)
 {
   auto bridge_options = rclcpp::NodeOptions().arguments({
     "--ros-args",
-    "-p", "dist_blocked:=50.0",
-    "-r", "scan:=test_scan",
-    "-r", "scan_bridged:=test_scan_bridged",
-    "-r", "trigger_mode:=test_trigger_mode",
+    "-p",
+    "dist_blocked:=50.0",
+    "-r",
+    "scan_raw:=test_scan",
+    "-r",
+    "scan_bridged:=test_scan_bridged",
+    "-r",
+    "trigger_mode:=test_trigger_mode",
   });
 
   auto bridge = std::make_shared<easynav_experiments::ScanModeBridge>(bridge_options);
@@ -311,14 +337,15 @@ TEST_F(ScanModeBridgeTest, BlocksDistanceClampedToRangeMax)
   std::promise<sensor_msgs::msg::LaserScan> received_promise;
   auto received_future = received_promise.get_future();
   auto sub = harness->create_subscription<sensor_msgs::msg::LaserScan>(
-    "test_scan_bridged", 10,
+      "test_scan_bridged", rclcpp::SensorDataQoS(),
     [&received_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) {
       if (msg) {
         received_promise.set_value(*msg);
       }
-    });
+      });
 
-  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan", 10);
+  auto pub = harness->create_publisher<sensor_msgs::msg::LaserScan>("test_scan",
+    rclcpp::SensorDataQoS());
   ASSERT_TRUE(spin_until(exec, [&]() {return pub->get_subscription_count() > 0;}, 2s));
 
   auto input = make_scan({1.0f, 2.0f});
@@ -327,7 +354,8 @@ TEST_F(ScanModeBridgeTest, BlocksDistanceClampedToRangeMax)
 
   ASSERT_TRUE(spin_until(exec, [&]() {
       return received_future.wait_for(0ms) == std::future_status::ready;
-    }, 2s));
+                                                                                                        },
+    2s));
 
   const auto out = received_future.get();
   for (const auto & r : out.ranges) {
