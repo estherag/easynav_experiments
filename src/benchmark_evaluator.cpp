@@ -14,234 +14,513 @@
 
 #include "easynav_experiments/benchmark_evaluator.hpp"
 
-#include <unistd.h>
-
-#include <chrono>
-#include <cmath>
+#include <algorithm>
 #include <fstream>
-#include <sstream>
 #include <string>
+#include <unistd.h>
+#include <dirent.h>
 
-#include "easynav_interfaces/msg/navigation_control.hpp"
-
-using std::placeholders::_1;
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace easynav_experiments
 {
 
-BenchmarkEvaluator::BenchmarkEvaluator()
-: Node("benchmark_evaluator_node")
-{
-  declare_parameter<int>("target_pid", -1);
-  declare_parameter<int>("run_id", 0);
-  declare_parameter<std::string>("nav_mode", "easynav");  // "nav2" or "easynav"
-  declare_parameter<std::string>("output_dir", ".");
+using namespace std::chrono_literals;
 
-  pid_ = get_parameter("target_pid").get_value<int>();
-  run_id_ = get_parameter("run_id").get_value<int>();
-  auto nav_mode = get_parameter("nav_mode").get_value<std::string>();
-  nav_mode_ = nav_mode;
-  output_dir_ = get_parameter("output_dir").get_value<std::string>();
+BenchmarkEvaluator::BenchmarkEvaluator(const rclcpp::NodeOptions & options)
+: Node("benchmark_evaluator", options)
+{
+  // Benchmark parameters
+  declare_parameter<std::string>("navigation", "nav2");
+  declare_parameter<std::string>("target", "component_conta");
+  declare_parameter<int>("cycles", 20);
+  declare_parameter<std::string>("output_file", "benchmark.csv");
+  declare_parameter<std::string>("frame_id", "map");
+  declare_parameter<std::vector<std::string>>("waypoints", std::vector<std::string>{});
+
+  // Timer benchmark state machine
+  timer_ = create_wall_timer(50ms, std::bind(&BenchmarkEvaluator::cycle, this));
+}
+void BenchmarkEvaluator::initialize()
+{
+  // Load benchmark parameters
+  get_parameter("navigation", navigation_);
+  get_parameter("target", target_);
+  get_parameter("cycles", total_cycles_);
+  get_parameter("output_file", output_file_);
+  get_parameter("frame_id", frame_id_);
+
+  std::vector<std::string> waypoint_names;
+  get_parameter("waypoints", waypoint_names);
+
+  if (waypoint_names.empty()) {
+    RCLCPP_ERROR(get_logger(), "No waypoints provided");
+    return;
+  }
+
+  waypoints_.clear();
+
+  for (const auto & waypoint_name : waypoint_names) {
+    std::vector<double> waypoint_values;
+
+    declare_parameter(waypoint_name, waypoint_values);
+    get_parameter(waypoint_name, waypoint_values);
+
+    if (waypoint_values.size() != 3) {
+      RCLCPP_ERROR(get_logger(), "Waypoint '%s' must contain x, y and yaw", waypoint_name.c_str());
+      continue;
+    }
+
+    geometry_msgs::msg::PoseStamped waypoint;
+    waypoint.header.frame_id = frame_id_;
+    waypoint.header.stamp = now();
+
+    waypoint.pose.position.x = waypoint_values[0];
+    waypoint.pose.position.y = waypoint_values[1];
+
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, waypoint_values[2]);
+    waypoint.pose.orientation = tf2::toMsg(q);
+
+    waypoints_.push_back(waypoint);
+  }
+
   clk_tck_ = sysconf(_SC_CLK_TCK);
-  cpu_cores_ = sysconf(_SC_NPROCESSORS_ONLN);
 
-  scan_sub_ =
-    create_subscription<sensor_msgs::msg::LaserScan>("/scan", 10,
-      std::bind(&BenchmarkEvaluator::scan_cb, this, _1));
+  // Create subscriptions
+  scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+      "scan_raw", 10, std::bind(&BenchmarkEvaluator::scan_callback, this, std::placeholders::_1));
 
-  if (nav_mode == "easynav") {
-    easynav_sub_ = create_subscription<easynav_interfaces::msg::NavigationControl>(
-        "easynav_control", 100, std::bind(&BenchmarkEvaluator::easynav_cb, this, _1));
-  } else {
-    status_sub_ = create_subscription<action_msgs::msg::GoalStatusArray>(
-        "/navigate_to_pose/_action/status", 10,
-        std::bind(&BenchmarkEvaluator::status_cb, this, _1));
-  }
+  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "odom", 10, std::bind(&BenchmarkEvaluator::odom_callback, this, std::placeholders::_1));
 
-  timer_ = create_wall_timer(std::chrono::milliseconds(200),
-      std::bind(&BenchmarkEvaluator::sample, this));
+  cmd_vel_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
+      "cmd_vel", 10, std::bind(&BenchmarkEvaluator::cmd_vel_callback, this, std::placeholders::_1));
 }
 
-double BenchmarkEvaluator::now_sec()
+void BenchmarkEvaluator::start_measurement()
 {
-  return this->get_clock()->now().seconds();
-}
+  // Find the navigation process
+  pid_ = -1;
+  resolve_target_pid();
 
-unsigned long long BenchmarkEvaluator::read_cpu_ticks()
-{
-  std::ifstream file("/proc/" + std::to_string(pid_) + "/stat");
-  if (!file.is_open()) {
-    return 0;
-  }
-
-  std::string tmp;
-  // Skip first 13 fields of /proc/<pid>/stat to reach utime (field 14) and stime (field 15)
-  for (int i = 0; i < 13; i++) {
-    file >> tmp;
-  }
-
-  unsigned long utime, stime;
-  file >> utime >> stime;
-  return static_cast<unsigned long long>(utime + stime);
-}
-
-double BenchmarkEvaluator::get_mem()
-{
-  std::ifstream file("/proc/" + std::to_string(pid_) + "/status");
-  std::string line;
-
-  while (std::getline(file, line)) {
-    if (line.rfind("VmRSS:", 0) == 0) {
-      std::istringstream iss(line);
-      std::string key, unit;
-      double value;
-      iss >> key >> value >> unit;
-      return value / 1024.0;
-    }
-  }
-  return 0.0;
-}
-
-void BenchmarkEvaluator::scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg)
-{
-  if (!active_) {
+  if (pid_ <= 0) {
+    RCLCPP_ERROR(get_logger(), "Unable to find navigation process");
+    state_ = BenchmarkState::ERROR;
     return;
   }
 
-  double scan_min = std::numeric_limits<double>::infinity();
-  for (auto r : msg->ranges) {
-    if (r > msg->range_min && r < msg->range_max) {
-      scan_min = std::min(scan_min, (double)r);
-    }
-  }
-  last_scan_min_dist_ = scan_min;
-  min_dist_to_obstacle_ = std::min(min_dist_to_obstacle_, scan_min);
+  // Reset benchmark data
+  samples_.clear();
+
+  distance_travelled_ = 0.0;
+  current_cmd_vel_frequency_ = 0.0;
+  current_obstacle_distance_ = std::numeric_limits<double>::infinity();
+
+  has_last_odom_ = false;
+  cmd_vel_stamps_.clear();
+
+  start_time_ = now();
+  last_sample_time_ = start_time_;
+
 }
 
-void BenchmarkEvaluator::status_cb(const action_msgs::msg::GoalStatusArray::SharedPtr msg)
+void BenchmarkEvaluator::cycle()
 {
-  if (msg->status_list.empty()) {
-    return;
-  }
+  switch (state_) {
+    case BenchmarkState::IDLE:
 
-  int status = msg->status_list.back().status;
+      initialize();
 
-  // EXECUTING
-  if (status == 2 && !active_) {
-    active_ = true;
-    start_time_ = now_sec();
-    min_dist_to_obstacle_ = std::numeric_limits<double>::infinity();
-    samples_.clear();
-    RCLCPP_INFO(get_logger(), "Navigation run started");
-  }
+      if (!initialized_) {
+        RCLCPP_INFO(get_logger(), "Initializing benchmark evaluator");
 
-  // SUCCEEDED
-  if (status == 4 && active_) {
-    active_ = false;
-    end_time_ = now_sec();
-    export_csv();
-    RCLCPP_INFO(get_logger(), "Navigation run finished (%.2f s)", end_time_ - start_time_);
-  }
+        if (navigation_ == "nav2") {
+          nav2_client_ =
+            rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(shared_from_this(),
+            "navigate_to_pose");
+        } else {
+          goal_manager_client_ = std::make_shared<easynav::GoalManagerClient>(shared_from_this());
+        }
 
-  // CANCELED or ABORTED
-  if ((status == 5 || status == 6) && active_) {
-    active_ = false;
-    RCLCPP_WARN(get_logger(), "Navigation run canceled or aborted, discarding data");
-  }
-}
+        initialized_ = true;
 
-void BenchmarkEvaluator::easynav_cb(const easynav_interfaces::msg::NavigationControl::SharedPtr msg)
-{
-  using NC = easynav_interfaces::msg::NavigationControl;
+        if (waypoints_.empty()) {
+          RCLCPP_ERROR(get_logger(), "Cannot start benchmark with no waypoints");
+          state_ = BenchmarkState::ERROR;
+          break;
+        }
+      }
 
-  // Accepted goal
-  if (msg->type == NC::ACCEPT && !active_) {
-    active_ = true;
-    start_time_ = now_sec();
-    min_dist_to_obstacle_ = std::numeric_limits<double>::infinity();
-    samples_.clear();
-    RCLCPP_INFO(get_logger(), "Navigation run started (EasyNav)");
-  }
+      discovery_wait_start_ = now();
+      state_ = BenchmarkState::WAITING_DISCOVERY;
+      break;
 
-  // Nav finished
-  if (msg->type == NC::FINISHED && active_) {
-    active_ = false;
-    end_time_ = now_sec();
-    export_csv();
-    RCLCPP_INFO(get_logger(), "Navigation run finished (%.2f s)", end_time_ - start_time_);
-  }
+    case BenchmarkState::WAITING_DISCOVERY:
+      {
+        bool ready = false;
 
-  // Nav cancelled
-  if ((msg->type == NC::CANCELLED || msg->type == NC::FAILED) && active_) {
-    active_ = false;
-    RCLCPP_WARN(get_logger(), "Navigation run cancelled or failed, discarding data");
+        if (navigation_ == "nav2") {
+          ready = nav2_client_->action_server_is_ready();
+        } else {
+          ready = goal_manager_client_->is_connected();
+        }
+
+        if (!ready) {
+          if ((now() - discovery_wait_start_).seconds() > 5.0) {
+            RCLCPP_ERROR(get_logger(), "Timed out waiting for navigation server discovery");
+            state_ = BenchmarkState::ERROR;
+          }
+          break;
+        }
+
+        RCLCPP_INFO(get_logger(), "Navigation backend discovered");
+
+        start_measurement();
+        if (state_ == BenchmarkState::ERROR) {
+          break;
+        }
+
+        state_ = BenchmarkState::SENDING_GOAL;
+        break;
+      }
+
+    case BenchmarkState::SENDING_GOAL:
+      if (send_goal()) {
+        state_ = BenchmarkState::NAVIGATING;
+      } else {
+        state_ = BenchmarkState::ERROR;
+      }
+      break;
+
+    case BenchmarkState::NAVIGATING:
+      // Sample metrics at a lower, fixed rate than control loop
+      if ((now() - last_sample_time_) > rclcpp::Duration(SAMPLING_PERIOD)) {
+        sample();
+        last_sample_time_ = now();
+      }
+
+      if (goal_succeeded()) {
+        state_ = BenchmarkState::NEXT_GOAL;
+      } else if (goal_failed()) {
+        state_ = BenchmarkState::ERROR;
+      }
+      break;
+
+    case BenchmarkState::NEXT_GOAL:
+      if (navigation_ == "easynav") {
+        goal_manager_client_->reset();
+      }
+
+      ++current_waypoint_index_;
+
+      if (current_waypoint_index_ >= waypoints_.size()) {
+        current_waypoint_index_ = 0;
+        ++current_cycle_;
+      }
+
+      state_ = (current_cycle_ >=
+        total_cycles_) ? BenchmarkState::FINISHED : BenchmarkState::SENDING_GOAL;
+      break;
+
+    case BenchmarkState::FINISHED:
+      store_results();
+      RCLCPP_INFO(get_logger(), "Benchmark finished");
+      rclcpp::shutdown();
+      break;
+
+    case BenchmarkState::ERROR:
+      cancel_goal();
+      store_results();
+      rclcpp::shutdown();
+      break;
   }
 }
 
 void BenchmarkEvaluator::sample()
 {
-  if (!active_ || pid_ <= 0) {
+  BenchmarkSample sample;
+
+  // Collect current metrics
+  sample.time = (now() - start_time_).seconds();
+  sample.cpu_ticks = read_cpu_ticks();
+  sample.memory = get_memory_usage();
+  sample.obstacle_distance = current_obstacle_distance_;
+  sample.cmd_vel_frequency = current_cmd_vel_frequency_;
+  sample.distance_travelled = distance_travelled_;
+
+  samples_.push_back(sample);
+
+}
+
+void BenchmarkEvaluator::store_results()
+{
+  std::ofstream file(output_file_);
+
+  if (!file.is_open()) {
+    RCLCPP_ERROR(get_logger(), "Failed to open output file '%s'", output_file_.c_str());
     return;
   }
 
-  Sample s;
-  s.t = now_sec();
-  s.cpu_ticks = read_cpu_ticks();
-  s.mem = get_mem();
-  s.min_dist_scan = last_scan_min_dist_;
+  file << "time,cpu,memory,"
+    "obstacle_distance,cmd_vel_frequency,"
+    "distance_travelled\n";
 
-  samples_.push_back(s);
+  for (std::size_t i = 0; i < samples_.size(); ++i) {
+    double cpu = 0.0;
+
+    // Compute CPU usage from consecutive samples
+    if (i > 0) {
+      const double dt = samples_[i].time - samples_[i - 1].time;
+
+      if (dt > 0.0) {
+        cpu = 100.0 *
+          (static_cast<double>(samples_[i].cpu_ticks - samples_[i - 1].cpu_ticks) /
+          static_cast<double>(clk_tck_)) /
+          dt;
+      }
+    }
+
+    file << samples_[i].time << ',' << cpu << ',' << samples_[i].memory << ',' <<
+      samples_[i].obstacle_distance << ','
+         << samples_[i].cmd_vel_frequency << ',' << samples_[i].distance_travelled << '\n';
+  }
+
+  RCLCPP_INFO(get_logger(), "Saved %zu samples to '%s'", samples_.size(), output_file_.c_str());
 }
 
-// Logger
-void BenchmarkEvaluator::export_csv()
+bool BenchmarkEvaluator::send_goal()
 {
-  std::string csv_name = output_dir_ + "/benchmark_evaluator_" + nav_mode_ + "_" +
-    std::to_string(run_id_) + ".csv";
-  std::ofstream f(csv_name);
-  f << "time_s,cpu_pct,mem_mb,min_dist_scan\n";
+  if (navigation_ == "nav2") {
+    if (!nav2_client_->wait_for_action_server(5s)) {
+      RCLCPP_ERROR(get_logger(), "NavigateToPose action server not available");
+      return false;
+    }
 
-  double cpu_sum = 0, mem_sum = 0, cpu_max = 0;
-  double min_dist_global = std::numeric_limits<double>::infinity();
-  size_t n = 0;
+    nav2_goal_finished_ = false;
+    nav2_goal_success_ = false;
 
-  for (size_t i = 1; i < samples_.size(); ++i) {
-    double dt = samples_[i].t - samples_[i - 1].t;
-    if (dt <= 0.0) {
+    nav2_msgs::action::NavigateToPose::Goal goal;
+    goal.pose = waypoints_[current_waypoint_index_];
+
+    rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions options;
+
+    options.goal_response_callback =
+      [this](rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::SharedPtr
+      goal_handle) {
+        nav2_goal_handle_ = goal_handle;
+
+        if (!goal_handle) {
+          nav2_goal_finished_ = true;
+          nav2_goal_success_ = false;
+        }
+      };
+
+    options.result_callback =
+      [this](const rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::WrappedResult
+      & result) {
+        nav2_goal_finished_ = true;
+        nav2_goal_success_ = result.code == rclcpp_action::ResultCode::SUCCEEDED;
+      };
+
+    nav2_client_->async_send_goal(goal, options);
+    return true;
+  }
+  RCLCPP_INFO(get_logger(), "Sending waypoint %.2f %.2f",
+      waypoints_[current_waypoint_index_].pose.position.x,
+              waypoints_[current_waypoint_index_].pose.position.y);
+
+  geometry_msgs::msg::PoseStamped goal;
+  goal.header.frame_id = frame_id_;
+  goal.header.stamp = now();
+  goal.pose = waypoints_[current_waypoint_index_].pose;
+
+  goal_manager_client_->send_goal(goal);
+
+  return true;
+}
+
+bool BenchmarkEvaluator::goal_succeeded()
+{
+  if (navigation_ == "nav2") {
+    return nav2_goal_finished_ && nav2_goal_success_;
+  }
+
+  return goal_manager_client_->get_state() ==
+         easynav::GoalManagerClient::State::NAVIGATION_FINISHED;
+}
+
+void BenchmarkEvaluator::cancel_goal()
+{
+  if (navigation_ == "nav2") {
+    if (nav2_goal_handle_) {
+      nav2_client_->async_cancel_goal(nav2_goal_handle_);
+    }
+
+    return;
+  }
+
+  goal_manager_client_->cancel();
+}
+
+bool BenchmarkEvaluator::goal_failed()
+{
+  if (navigation_ == "nav2") {
+    return nav2_goal_finished_ && !nav2_goal_success_;
+  }
+
+  auto state = goal_manager_client_->get_state();
+
+  return state == easynav::GoalManagerClient::State::NAVIGATION_FAILED ||
+         state == easynav::GoalManagerClient::State::NAVIGATION_CANCELLED ||
+         state == easynav::GoalManagerClient::State::ERROR;
+}
+
+void BenchmarkEvaluator::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  if (!has_last_odom_) {
+    last_odom_position_ = msg->pose.pose.position;
+    has_last_odom_ = true;
+    return;
+  }
+
+  const double dx = msg->pose.pose.position.x - last_odom_position_.x;
+  const double dy = msg->pose.pose.position.y - last_odom_position_.y;
+
+  distance_travelled_ += std::hypot(dx, dy);
+
+  last_odom_position_ = msg->pose.pose.position;
+}
+
+void BenchmarkEvaluator::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+{
+  // Keep the minimum valid obstacle distance
+  for (const auto & range : msg->ranges) {
+    if (!std::isfinite(range) || range < msg->range_min || range > msg->range_max) {
       continue;
     }
 
-    // Compute CPU% as: (delta_ticks / CLK_TCK) / delta_t / num_cores * 100
-    // Gives per-core CPU percentage (0–100%), normalised across all cores.
-    double cpu = 100.0 * ((double)(samples_[i].cpu_ticks - samples_[i - 1].cpu_ticks) / clk_tck_) /
-      dt / cpu_cores_;
-    double t = samples_[i].t - start_time_;
-    f << t << "," << cpu << "," << samples_[i].mem << "," << samples_[i].min_dist_scan << "\n";
+    current_obstacle_distance_ = std::min(current_obstacle_distance_, static_cast<double>(range));
+  }
+}
 
-    cpu_sum += cpu;
-    cpu_max = std::max(cpu_max, cpu);
-    mem_sum += samples_[i].mem;
-    min_dist_global = std::min(min_dist_global, samples_[i].min_dist_scan);
-    ++n;
+void BenchmarkEvaluator::cmd_vel_callback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)
+{
+  const auto stamp = msg->header.stamp;
+
+  cmd_vel_stamps_.push_back(stamp);
+
+  // Keep a sliding window of timestamps
+  while (cmd_vel_stamps_.size() > 50) {
+    cmd_vel_stamps_.erase(cmd_vel_stamps_.begin());
   }
 
-  std::string json_name =
-    output_dir_ + "/benchmark_evaluator_" + nav_mode_ + "_" + std::to_string(run_id_) +
-    "_summary.json";
-  std::ofstream j(json_name);
-  double nd = static_cast<double>(std::max<size_t>(1, n));
-  j << "{\n"
-    << "  \"run_id\": " << run_id_ << ",\n"
-    << "  \"duration_s\": " << (end_time_ - start_time_) << ",\n"
-    << "  \"cpu_mean_pct\": " << cpu_sum / nd << ",\n"
-    << "  \"cpu_max_pct\": " << cpu_max << ",\n"
-    << "  \"mem_mean_mb\": " << mem_sum / nd << ",\n"
-    << "  \"min_dist_to_obstacle_m\": " << min_dist_global << "\n"
-    << "}\n";
+  if (cmd_vel_stamps_.size() >= 2) {
+    const double dt = (cmd_vel_stamps_.back() - cmd_vel_stamps_.front()).seconds();
 
-  RCLCPP_INFO(get_logger(), "Saved: %s", csv_name.c_str());
-  RCLCPP_INFO(get_logger(), "Saved: %s", json_name.c_str());
-  rclcpp::shutdown();
+    if (dt > 0.0) {
+      current_cmd_vel_frequency_ = static_cast<double>(cmd_vel_stamps_.size() - 1) / dt;
+    }
+  }
+}
+unsigned long long BenchmarkEvaluator::read_cpu_ticks()
+{
+  if (pid_ <= 0) {
+    return 0;
+  }
+
+  std::ifstream file("/proc/" + std::to_string(pid_) + "/stat");
+
+  if (!file.is_open()) {
+    return 0;
+  }
+
+  std::string tmp;
+
+  // Skip the first 13 fields to reach utime (field 14)
+  for (int i = 0; i < 13; ++i) {
+    file >> tmp;
+  }
+
+  unsigned long utime;
+  unsigned long stime;
+
+  file >> utime >> stime;
+
+  return static_cast<unsigned long long>(utime + stime);
+}
+
+double BenchmarkEvaluator::get_memory_usage()
+{
+  if (pid_ <= 0) {
+    return 0.0;
+  }
+
+  std::ifstream file("/proc/" + std::to_string(pid_) + "/status");
+
+  if (!file.is_open()) {
+    return 0.0;
+  }
+
+  std::string line;
+
+  while (std::getline(file, line)) {
+    if (line.rfind("VmRSS:", 0) == 0) {
+      std::istringstream iss(line);
+
+      std::string key;
+      std::string unit;
+      double value;
+
+      iss >> key >> value >> unit;
+
+      return value / 1024.0;  // kB to MB
+    }
+  }
+
+  return 0.0;
+}
+
+void BenchmarkEvaluator::resolve_target_pid()
+{
+  pid_ = -1;
+
+  DIR * dir = opendir("/proc");
+
+  if (dir == nullptr) {
+    RCLCPP_ERROR(get_logger(), "Unable to open /proc");
+    return;
+  }
+
+  struct dirent * entry;
+
+  while ((entry = readdir(dir)) != nullptr) {
+    std::string pid_str(entry->d_name);
+
+    if (!std::all_of(pid_str.begin(), pid_str.end(), ::isdigit)) {
+      continue;
+    }
+
+    std::ifstream file("/proc/" + pid_str + "/comm");
+
+    std::string process_name;
+    std::getline(file, process_name);
+
+    if (process_name == target_) {
+      pid_ = std::stoi(pid_str);
+
+      RCLCPP_INFO(get_logger(), "Monitoring process '%s' (PID %d)", target_.c_str(), pid_);
+
+      break;
+    }
+  }
+
+  closedir(dir);
+
+  if (pid_ < 0) {
+    RCLCPP_WARN(get_logger(), "Unable to find process '%s'", target_.c_str());
+  }
 }
 
 }  // namespace easynav_experiments

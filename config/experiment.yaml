@@ -1,0 +1,20 @@
+benchmark_evaluator:
+  ros__parameters:
+    cycles: 2
+    frame_id: map
+
+    waypoints:
+      - wp1
+      - wp2
+      # - wp3
+      # - wp4
+      # - wp5
+
+    wp1: [3.4, -0.31, -1.38]
+    wp2: [1.17, -4.0, -3.14]
+    # wp3: [-2.05, -1.4, 2.26]
+    # wp4: [-3.95, -0.18, 2.49]
+    # wp5: [0.0, 0.0, 0.0]
+
+
+    

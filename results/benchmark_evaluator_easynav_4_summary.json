@@ -1,8 +1,0 @@
-{
-  "run_id": 4,
-  "duration_s": 10.7419,
-  "cpu_mean_pct": 0.948425,
-  "cpu_max_pct": 1.1367,
-  "mem_mean_mb": 112.875,
-  "min_dist_to_obstacle_m": 0.296
-}

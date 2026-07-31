@@ -12,95 +12,141 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_NODE_HPP_
-#define EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_NODE_HPP_
+#ifndef EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_HPP_
+#define EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_HPP_
 
-#include <fstream>
+#include <chrono>
+#include <cstddef>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "action_msgs/msg/goal_status_array.hpp"
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <nav2_msgs/action/navigate_to_pose.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include <sensor_msgs/msg/laser_scan.hpp>
+
 #include "easynav_interfaces/msg/navigation_control.hpp"
-#include "rclcpp/rclcpp.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
+#include "easynav_system/GoalManagerClient.hpp"
 
 namespace easynav_experiments
 {
 
-/**
- * @brief ROS 2 node that records CPU, RAM and laser safety metrics during a
- *        single navigation run and exports them to CSV + JSON summary.
- *
- * Structure:
- *   1. Waits for a goal accepted event (EasyNav: NavigationControl::ACCEPT,
- *      nav2: GoalStatusArray status == EXECUTING).
- *   2. Samples CPU%, RAM (MB) and min laser distance at 5 Hz until the run ends.
- *   3. On goal reached, writes:
- *        - <output_dir>/benchmark_evaluator_<mode>_<run_id>.csv  (time-series)
- *        - <output_dir>/benchmark_evaluator_<mode>_<run_id>_summary.json
- *
- * Parameters:
- *   - target_pid  (int)    : PID of the navigation process to monitor.
- *   - run_id      (int)    : Identifier appended to output filenames.
- *   - nav_mode    (string) : "easynav" or "nav2".
- *   - output_dir  (string) : Directory where results are saved.
- */
+/// Benchmark node for evaluating navigation frameworks.
 class BenchmarkEvaluator : public rclcpp::Node
 {
 public:
-  BenchmarkEvaluator();
+  explicit BenchmarkEvaluator(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
-  /// One resource snapshot taken at certain freq (200 ms) while navigation is active.
-  struct Sample
+  enum class BenchmarkState
   {
-    double t;                      ///< Wall-clock time (seconds).
-    unsigned long long cpu_ticks;  ///< Cumulative utime+stime from /proc/<pid>/stat.
-    double mem;                    ///< Resident set size in MB (VmRSS).
-    double min_dist_scan;          ///< Minimum laser range in the latest scan (m).
+    IDLE,
+    WAITING_DISCOVERY,
+    SENDING_GOAL,
+    NAVIGATING,
+    NEXT_GOAL,
+    FINISHED,
+    ERROR
   };
 
-  bool active_ = false;    ///< True while a navigation run is being recorded.
-  double start_time_ = 0;  ///< Wall-clock time at run start (s).
-  double end_time_ = 0;    ///< Wall-clock time at run end (s).
-  double min_dist_to_obstacle_ =
-    std::numeric_limits<double>::infinity();    ///< Global minimum laser range over the whole run (m).
-  double last_scan_min_dist_ =
-    std::numeric_limits<double>::infinity();    ///< Min range from the most recent laser scan (m).
-  std::vector<Sample> samples_;                 ///< All samples collected during the run.
+  struct BenchmarkSample
+  {
+    double time{0.0};
 
-  int pid_;                 ///< PID of the monitored navigation process.
-  int run_id_ = 0;          ///< Run identifier used in output filenames.
-  long clk_tck_ = 1;        ///< Kernel clock ticks per second (_SC_CLK_TCK).
-  int cpu_cores_ = 1;       ///< Number of logical CPU cores (for normalisation).
-  std::string output_dir_;  ///< Directory where CSV and JSON are written.
-  std::string nav_mode_;    ///< "easynav" or "nav2", used in filenames.
+    unsigned long long cpu_ticks{0};
+    double memory{0.0};
 
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-  rclcpp::Subscription<action_msgs::msg::GoalStatusArray>::SharedPtr status_sub_;
-  rclcpp::Subscription<easynav_interfaces::msg::NavigationControl>::SharedPtr easynav_sub_;
+    double obstacle_distance{std::numeric_limits<double>::infinity()};
+    double cmd_vel_frequency{0.0};
+    double distance_travelled{0.0};
+  };
+
+  void initialize();
+  void cycle();
+  void resolve_target_pid();
+
+  // Benchmark
+  void start_measurement();
+  void sample();
+  void store_results();
+
+  // Metrics
+  unsigned long long read_cpu_ticks();
+  double get_memory_usage();
+
+  // Callbacks
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  void cmd_vel_callback(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
+  void control_callback(const easynav_interfaces::msg::NavigationControl::SharedPtr msg);
+
+  // Navigation
+  bool send_goal();
+  bool goal_succeeded();
+  bool goal_failed();
+  void cancel_goal();
+
+  // Parameters
+  std::string navigation_;
+  std::string target_;
+  std::string frame_id_;
+  std::string output_file_;
+
+  std::size_t total_cycles_{20};
+
+  // State
+  BenchmarkState state_{BenchmarkState::IDLE};
+  bool initialized_{false};
+  rclcpp::Time discovery_wait_start_;
+
+  std::size_t current_cycle_{0};
+  std::size_t current_waypoint_index_{0};
+  pid_t pid_{-1};
+
+  // Waypoints
+  std::vector<geometry_msgs::msg::PoseStamped> waypoints_;
+
+  // Samples
+  std::vector<BenchmarkSample> samples_;
+
+  // Runtime
+  rclcpp::Time start_time_;
+  rclcpp::Time last_sample_time_;
+  long clk_tck_{100};
+  static constexpr std::chrono::milliseconds SAMPLING_PERIOD{200};
+
+  double distance_travelled_{0.0};
+  double current_obstacle_distance_{std::numeric_limits<double>::infinity()};
+  double current_cmd_vel_frequency_{0.0};
+
+  bool has_last_odom_{false};
+  geometry_msgs::msg::Point last_odom_position_;
+
+  std::vector<rclcpp::Time> cmd_vel_stamps_;
+
+  // ROS interfaces
   rclcpp::TimerBase::SharedPtr timer_;
 
-  /// @returns Current wall-clock time in seconds.
-  double now_sec();
-  /// @returns Cumulative CPU ticks (utime+stime) for pid_ from /proc.
-  unsigned long long read_cpu_ticks();
-  /// @returns Resident memory of pid_ in MB from /proc.
-  double get_mem();
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
 
-  /// Updates min laser distance; active only while active_ is true.
-  void scan_cb(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-  /// Tracks nav2 action status: starts/stops recording on EXECUTING/SUCCEEDED.
-  void status_cb(const action_msgs::msg::GoalStatusArray::SharedPtr msg);
-  /// Tracks EasyNav control messages: starts/stops recording on ACCEPT/FINISHED.
-  void easynav_cb(const easynav_interfaces::msg::NavigationControl::SharedPtr msg);
-  /// Called at 5 Hz; appends one Sample to samples_ while active_.
-  void sample();
-  /// Writes time-series CSV and summary JSON, then calls rclcpp::shutdown().
-  void export_csv();
+  // Navigation interfaces
+  rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr   nav2_client_;
+
+  rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::SharedPtr nav2_goal_handle_;
+
+  bool nav2_goal_finished_{false};
+  bool nav2_goal_success_{false};
+
+  std::shared_ptr<easynav::GoalManagerClient> goal_manager_client_;
 };
 
 }  // namespace easynav_experiments
 
-#endif  // EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_NODE_HPP_
+#endif  // EASYNAV_EXPERIMENTS__BENCHMARK_EVALUATOR_HPP_

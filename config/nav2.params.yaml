@@ -36,7 +36,7 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    scan_topic: scan
+    scan_topic: scan_raw
 
 map_saver:
   ros__parameters:
@@ -213,7 +213,7 @@ local_costmap:
         mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: scan
+          topic: scan_raw
           max_obstacle_height: 2.0
           clearing: true
           marking: true
@@ -251,7 +251,7 @@ global_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: scan
+          topic: scan_raw
           max_obstacle_height: 2.0
           clearing: true
           marking: true

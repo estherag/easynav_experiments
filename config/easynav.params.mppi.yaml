@@ -1,6 +1,6 @@
 controller_node:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     controller_types: [mppi]
     mppi:
       rt_freq: 30.0
@@ -18,7 +18,7 @@ controller_node:
 
 localizer_node:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     localizer_types: [costmap]
     costmap:
       rt_freq: 50.0
@@ -38,13 +38,13 @@ localizer_node:
 
 maps_manager_node:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     map_types: [costmap]
     costmap:
       freq: 10.0
       plugin: easynav_costmap_maps_manager/CostmapMapsManager
       package: easynav_experiments
-      map_path_file: maps/map2.yaml
+      map_path_file: maps/home2.yaml
       filters: [obstacles, inflation]
       obstacles:
         plugin: easynav_costmap_maps_manager/CostmapMapsManager/ObstaclesFilter
@@ -55,9 +55,9 @@ maps_manager_node:
 
 planner_node:
   ros__parameters:
-    use_sim_time: false
-    planner_types: [simple]
-    simple:
+    use_sim_time: true
+    planner_types: [costmap]
+    costmap:
       freq: 10.0
       plugin: easynav_costmap_planner/CostmapPlanner
       cost_factor: 10.0
@@ -65,24 +65,28 @@ planner_node:
 
 sensors_node:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     forget_time: 0.5
     sensors: [laser1]
-    perception_default_frame: odom
+    # perception_default_frame: odom
     laser1:
       topic: scan_raw
       type: sensor_msgs/msg/LaserScan
       group: points
-    camera1:
-      topic: rgbd_camera/points
-      type: sensor_msgs/msg/PointCloud2
-      group: points
+    # camera1:
+    #   topic: rgbd_camera/points
+    #   type: sensor_msgs/msg/PointCloud2
+    #   group: points
 
 system_node:
   ros__parameters:
-    use_sim_time: false
-    use_real_time: true
+    use_sim_time: true
+    use_real_time: false
     position_tolerance: 0.25
     angle_tolerance: 0.25
-    robot_footprint_frame: base_link
-    robot_frame: base_link
+    # robot_footprint_frame: base_link
+    # robot_frame: base_link
+    use_cmd_vel_stamped: true
+    freq: 30.0
+    rt_freq: 50.0
+    allow_preempt_goal: true

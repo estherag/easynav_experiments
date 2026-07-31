@@ -6,17 +6,24 @@
   <description>Experiment support nodes and tools for EasyNavigation.</description>
 
   <maintainer email="fmrico@gmail.com">Francisco Martín Rico</maintainer>
+  <maintainer email="e.aguado.glez@gmail.com">Esther Aguado</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>action_msgs</depend>
   <depend>easynav_interfaces</depend>
+  <depend>easynav_system</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
-
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>yaml-cpp</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
