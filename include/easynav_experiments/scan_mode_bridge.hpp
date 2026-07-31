@@ -17,7 +17,7 @@
 
 #include <mutex>
 
-#include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -39,11 +39,13 @@ public:
 private:
   void on_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg);
 
-  void on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg);
+  void on_cmd_vel(const geometry_msgs::msg::TwistStamped::SharedPtr msg);
 
   void on_trigger_mode(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+
+  void append_latency_sample(int64_t latency_us);
 
   sensor_msgs::msg::LaserScan make_blocked(const sensor_msgs::msg::LaserScan & input) const;
 
@@ -52,6 +54,7 @@ private:
 
   double stop_lin_eps_{0.01};
   double stop_ang_eps_{0.01};
+  std::string latency_output_file_;
 
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
 
@@ -62,7 +65,7 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
-  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_srv_;
 };
 
