@@ -51,7 +51,7 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'easynav.params.mppi.yaml'),
+            'easynav.tb4.params.yaml'),
         description='EasyNav parameter file',
     )
 
@@ -89,7 +89,6 @@ def generate_launch_description():
                 'navigation': 'easynav',
                 'output_file': output_file,
                 'target': 'system_main',
-                # 'use_sim_time': True,
             },
         ],
         output='screen',

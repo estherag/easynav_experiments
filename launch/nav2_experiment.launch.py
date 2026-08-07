@@ -56,7 +56,7 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'maps',
-            'home2.yaml'),
+            'my-home.yaml'),
         description='Map used by Nav2 bringup',
     )
 
@@ -65,7 +65,7 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'kobuiki.yaml'),
+            'nav2.params.yaml'),
         description='Nav2 parameter file',
     )
 
@@ -94,7 +94,7 @@ def generate_launch_description():
             'map': map_file,
             'params_file': params_file,
             'use_composition': 'True',
-            # ADD INTRACOMMS
+            'use_intra_process_comms': 'True',
         }.items(),
     )
 
@@ -107,7 +107,6 @@ def generate_launch_description():
                 'navigation': 'nav2',
                 'output_file': output_file,
                 'target': 'component_conta',
-                # 'use_sim_time': True,
             },
         ],
         output='screen',
