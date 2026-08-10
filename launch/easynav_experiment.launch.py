@@ -19,7 +19,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, Shutdown, TimerAction
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 
 from launch_ros.actions import Node
@@ -51,7 +51,7 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'easynav.tb4.params.yaml'),
+            'sim-easynav.params.mppi.yaml'),
         description='EasyNav parameter file',
     )
 
@@ -92,7 +92,6 @@ def generate_launch_description():
             },
         ],
         output='screen',
-        on_exit=Shutdown(),
     )
 
     ld = LaunchDescription()
@@ -104,7 +103,7 @@ def generate_launch_description():
     ld.add_action(bringup_cmd)
     ld.add_action(
         TimerAction(
-            period=15.0,
+            period=40.0,
             actions=[evaluator_cmd],
         )
     )

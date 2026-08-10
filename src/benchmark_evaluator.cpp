@@ -90,7 +90,7 @@ void BenchmarkEvaluator::initialize()
 
   // Create subscriptions
   scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-      "scan_raw", 10, std::bind(&BenchmarkEvaluator::scan_callback, this, std::placeholders::_1));
+      "scan", 10, std::bind(&BenchmarkEvaluator::scan_callback, this, std::placeholders::_1));
 
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "odom", 10, std::bind(&BenchmarkEvaluator::odom_callback, this, std::placeholders::_1));
@@ -204,7 +204,10 @@ void BenchmarkEvaluator::cycle()
       if (goal_succeeded()) {
         state_ = BenchmarkState::NEXT_GOAL;
       } else if (goal_failed()) {
-        state_ = BenchmarkState::ERROR;
+        RCLCPP_WARN(
+          get_logger(), "Goal %zu of cycle %zu failed; continuing with next waypoint",
+          current_waypoint_index_, current_cycle_);
+        state_ = BenchmarkState::NEXT_GOAL;
       }
       break;
 
@@ -227,13 +230,11 @@ void BenchmarkEvaluator::cycle()
     case BenchmarkState::FINISHED:
       store_results();
       RCLCPP_INFO(get_logger(), "Benchmark finished");
-      rclcpp::shutdown();
       break;
 
     case BenchmarkState::ERROR:
       cancel_goal();
       store_results();
-      rclcpp::shutdown();
       break;
   }
 }
@@ -354,10 +355,11 @@ bool BenchmarkEvaluator::goal_succeeded()
 void BenchmarkEvaluator::cancel_goal()
 {
   if (navigation_ == "nav2") {
-    if (nav2_goal_handle_) {
+    if (nav2_goal_handle_ && !nav2_goal_finished_) {
       nav2_client_->async_cancel_goal(nav2_goal_handle_);
+      RCLCPP_INFO(get_logger(), "Requested cancellation of the active Nav2 goal");
+      return;
     }
-
     return;
   }
 
@@ -395,14 +397,18 @@ void BenchmarkEvaluator::odom_callback(const nav_msgs::msg::Odometry::SharedPtr 
 
 void BenchmarkEvaluator::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
-  // Keep the minimum valid obstacle distance
+  // Compute the minimum valid obstacle distance for this scan only
+  double min_distance = std::numeric_limits<double>::infinity();
+
   for (const auto & range : msg->ranges) {
     if (!std::isfinite(range) || range < msg->range_min || range > msg->range_max) {
       continue;
     }
 
-    current_obstacle_distance_ = std::min(current_obstacle_distance_, static_cast<double>(range));
+    min_distance = std::min(min_distance, static_cast<double>(range));
   }
+
+  current_obstacle_distance_ = min_distance;
 }
 
 void BenchmarkEvaluator::cmd_vel_callback(const geometry_msgs::msg::TwistStamped::SharedPtr msg)

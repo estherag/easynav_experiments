@@ -196,7 +196,8 @@ void ScanModeBridge::append_latency_sample(int64_t latency_us)
     file << "latency_us,dist_blocked,stop_lin_eps,stop_ang_eps\n";
   }
 
-  file   << now().seconds() << latency_us << ","
+  file   << now().seconds() << ","
+         << latency_us << ","
          << dist_blocked_ << ","
          << stop_lin_eps_ << ","
          << stop_ang_eps_ << "\n";

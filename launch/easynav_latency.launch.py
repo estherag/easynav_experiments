@@ -66,7 +66,7 @@ def generate_launch_description():
         parameters=[params_file],
         remappings=[
             ('cmd_vel_stamped', 'cmd_vel'),
-            ('scan_raw', 'scan_bridged'),
+            ('scan', 'scan_bridged'),
         ],
         output='screen',
     )
