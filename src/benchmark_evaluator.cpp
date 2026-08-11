@@ -141,11 +141,11 @@ void BenchmarkEvaluator::cycle()
     case BenchmarkState::IDLE:
       if (!initialized_) {
         RCLCPP_INFO(get_logger(), "Initializing benchmark evaluator");
-        
+
         initialize();
 
         RCLCPP_INFO(get_logger(), "initialize() done, waypoints=%zu", waypoints_.size());
-        
+
         if (navigation_ == "nav2") {
           nav2_client_ =
             rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(shared_from_this(),
