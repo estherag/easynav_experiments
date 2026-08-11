@@ -1,38 +1,84 @@
+# controller_node:
+#   ros__parameters:
+#     use_sim_time: false
+#     colision_checker:
+#       active: true
+#       debug_markers: true
+#       downsample_leaf_size: 0.05
+#       robot_radius: 0.19
+#       brake_acc: 1.0
+#       safety_margin: 0.05
+#     controller_types: [serest]
+#     serest:
+#       rt_freq: 20.0
+#       plugin: easynav_serest_controller/SerestController
+#       allow_reverse: false
+#       max_linear_speed: 0.5
+#       max_angular_speed: 1.9
+#       v_progress_min: 0.08
+#       k_s_share_max: 0.5
+#       k_theta: 2.5
+#       k_y: 1.5
+#       goal_pos_tol: 0.25
+#       goal_yaw_tol_deg: 14.3 # 0.25 rad
+#       slow_radius: 0.60
+#       slow_min_speed: 0.03
+#       final_align_k: 2.0
+#       final_align_wmax: 0.6
+#       corner_guard_enable: true
+#       corner_gain_ey: 1.8
+#       corner_gain_eth: 0.7
+#       corner_gain_kappa: 0.4
+#       corner_min_alpha: 0.35
+#       corner_boost_omega: 1.0
+#       a_lat_soft: 0.9
+#       apex_ey_des: 0.05
 controller_node:
   ros__parameters:
     use_sim_time: false
     colision_checker:
       active: true
-      debug_markers: true
+      debug_markers: false
       downsample_leaf_size: 0.05
-      robot_radius: 0.19
+      robot_radius: 0.2
       brake_acc: 1.0
       safety_margin: 0.05
-    controller_types: [serest]
-    serest:
+    controller_types: [rpp]
+    rpp:
       rt_freq: 20.0
-      plugin: easynav_serest_controller/SerestController
-      allow_reverse: false
-      max_linear_speed: 0.5
-      max_angular_speed: 1.9
-      v_progress_min: 0.08
-      k_s_share_max: 0.5
-      k_theta: 2.5
-      k_y: 1.5
-      goal_pos_tol: 0.25
-      goal_yaw_tol_deg: 14.3 # 0.25 rad
-      slow_radius: 0.60
-      slow_min_speed: 0.03
-      final_align_k: 2.0
-      final_align_wmax: 0.6
-      corner_guard_enable: true
-      corner_gain_ey: 1.8
-      corner_gain_eth: 0.7
-      corner_gain_kappa: 0.4
-      corner_min_alpha: 0.35
-      corner_boost_omega: 1.0
-      a_lat_soft: 0.9
-      apex_ey_des: 0.05
+      plugin: easynav_regulated_pp_controller/RegulatedPurePursuitController
+      # Velocity / acceleration limits (TurtleBot 2 / Kobuki base)
+      max_linear_vel: 0.35
+      min_linear_vel: -0.02
+      max_angular_vel: 1.2
+      min_angular_vel: -1.2
+      max_linear_accel: 1.0
+      max_linear_decel: 1.0
+      max_angular_accel: 2.0
+      max_angular_decel: 2.0
+      use_dynamic_window: false
+      allow_reversing: false
+      # Lookahead
+      lookahead_dist: 0.7
+      min_lookahead_dist: 0.3
+      max_lookahead_dist: 0.9
+      lookahead_time: 1.2
+      use_velocity_scaled_lookahead_dist: false
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: false
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: false
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.15
+      use_fixed_curvature_lookahead: true
+      curvature_lookahead_dist: 0.25
+      use_rotate_to_heading: true
+      rotate_to_heading_angular_vel: 1.2
+      rotate_to_heading_min_angle: 1.5
+      max_robot_pose_search_dist: 10.0
+
 
 localizer_node:
   ros__parameters:
@@ -62,16 +108,16 @@ maps_manager_node:
     costmap:
       freq: 10.0
       plugin: easynav_costmap_maps_manager/CostmapMapsManager
-      package: easynav_indoor_testcase
+      package: easynav_experiments
       map_path_file: maps/my-home.yaml
       filters: [obstacles, inflation]
       obstacles:
         plugin: easynav_costmap_maps_manager/CostmapMapsManager/ObstaclesFilter
       inflation:
         plugin: easynav_costmap_maps_manager/CostmapMapsManager/InflationFilter
-        inflation_radius: 0.45
-        inscribed_radius: 0.19
-        cost_scaling_factor: 4.0
+        inflation_radius: 6.0
+        inscribed_radius: 0.2
+        cost_scaling_factor: 6.0
 
 planner_node:
   ros__parameters:

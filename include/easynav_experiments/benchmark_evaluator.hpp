@@ -73,7 +73,6 @@ private:
   // Benchmark
   void start_measurement();
   void sample();
-  void store_results();
 
   // Metrics
   unsigned long long read_cpu_ticks();
@@ -102,6 +101,7 @@ private:
   // State
   BenchmarkState state_{BenchmarkState::IDLE};
   bool initialized_{false};
+  bool error_handled_{false};
   rclcpp::Time discovery_wait_start_;
 
   std::size_t current_cycle_{0};

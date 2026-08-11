@@ -122,7 +122,7 @@ def generate_launch_description():
     ld.add_action(bringup_cmd)
     ld.add_action(
         TimerAction(
-            period=15.0,
+            period=30.0,
             actions=[evaluator_cmd],
         )
     )

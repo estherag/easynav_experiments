@@ -51,7 +51,7 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'sim-easynav.params.mppi.yaml'),
+            'easynav.tb4.params.yaml'),
         description='EasyNav parameter file',
     )
 
@@ -103,7 +103,7 @@ def generate_launch_description():
     ld.add_action(bringup_cmd)
     ld.add_action(
         TimerAction(
-            period=40.0,
+            period=15.0,
             actions=[evaluator_cmd],
         )
     )

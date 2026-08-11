@@ -124,18 +124,28 @@ void BenchmarkEvaluator::start_measurement()
   start_time_ = now();
   last_sample_time_ = start_time_;
 
+  // Create output file and write header
+  std::ofstream file(output_file_, std::ios::trunc);
+  if (!file.is_open()) {
+    RCLCPP_ERROR(get_logger(), "Failed to create output file '%s'", output_file_.c_str());
+    state_ = BenchmarkState::ERROR;
+    return;
+  }
+  file << "time,cpu,memory,obstacle_distance,cmd_vel_frequency,distance_travelled\n";
+  RCLCPP_INFO(get_logger(), "Output file created: '%s'", output_file_.c_str());
 }
 
 void BenchmarkEvaluator::cycle()
 {
   switch (state_) {
     case BenchmarkState::IDLE:
-
-      initialize();
-
       if (!initialized_) {
         RCLCPP_INFO(get_logger(), "Initializing benchmark evaluator");
+        
+        initialize();
 
+        RCLCPP_INFO(get_logger(), "initialize() done, waypoints=%zu", waypoints_.size());
+        
         if (navigation_ == "nav2") {
           nav2_client_ =
             rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(shared_from_this(),
@@ -145,6 +155,7 @@ void BenchmarkEvaluator::cycle()
         }
 
         initialized_ = true;
+        RCLCPP_INFO(get_logger(), "Navigation client created (navigation=%s)", navigation_.c_str());
 
         if (waypoints_.empty()) {
           RCLCPP_ERROR(get_logger(), "Cannot start benchmark with no waypoints");
@@ -154,6 +165,7 @@ void BenchmarkEvaluator::cycle()
       }
 
       discovery_wait_start_ = now();
+      RCLCPP_INFO(get_logger(), "Starting discovery wait");
       state_ = BenchmarkState::WAITING_DISCOVERY;
       break;
 
@@ -187,6 +199,8 @@ void BenchmarkEvaluator::cycle()
       }
 
     case BenchmarkState::SENDING_GOAL:
+      RCLCPP_INFO(get_logger(), "Sending goal to waypoint %zu/%zu, cycle %zu/%zu",
+        current_waypoint_index_ + 1, waypoints_.size(), current_cycle_ + 1, total_cycles_);
       if (send_goal()) {
         state_ = BenchmarkState::NAVIGATING;
       } else {
@@ -205,9 +219,9 @@ void BenchmarkEvaluator::cycle()
         state_ = BenchmarkState::NEXT_GOAL;
       } else if (goal_failed()) {
         RCLCPP_WARN(
-          get_logger(), "Goal %zu of cycle %zu failed; continuing with next waypoint",
+          get_logger(), "Goal %zu of cycle %zu failed; retrying same waypoint",
           current_waypoint_index_, current_cycle_);
-        state_ = BenchmarkState::NEXT_GOAL;
+        state_ = BenchmarkState::SENDING_GOAL;
       }
       break;
 
@@ -225,16 +239,21 @@ void BenchmarkEvaluator::cycle()
 
       state_ = (current_cycle_ >=
         total_cycles_) ? BenchmarkState::FINISHED : BenchmarkState::SENDING_GOAL;
+      RCLCPP_INFO(get_logger(), "Next goal: waypoint %zu, cycle %zu",
+        current_waypoint_index_, current_cycle_);
       break;
 
     case BenchmarkState::FINISHED:
-      store_results();
       RCLCPP_INFO(get_logger(), "Benchmark finished");
       break;
 
     case BenchmarkState::ERROR:
-      cancel_goal();
-      store_results();
+      if (!error_handled_) {
+        error_handled_ = true;
+        cancel_goal();
+        error_handled_ = false;
+        state_ = BenchmarkState::SENDING_GOAL;
+      }
       break;
   }
 }
@@ -250,52 +269,39 @@ void BenchmarkEvaluator::sample()
   sample.obstacle_distance = current_obstacle_distance_;
   sample.cmd_vel_frequency = current_cmd_vel_frequency_;
   sample.distance_travelled = distance_travelled_;
-
   samples_.push_back(sample);
 
-}
-
-void BenchmarkEvaluator::store_results()
-{
-  std::ofstream file(output_file_);
-
-  if (!file.is_open()) {
-    RCLCPP_ERROR(get_logger(), "Failed to open output file '%s'", output_file_.c_str());
-    return;
-  }
-
-  file << "time,cpu,memory,"
-    "obstacle_distance,cmd_vel_frequency,"
-    "distance_travelled\n";
-
-  for (std::size_t i = 0; i < samples_.size(); ++i) {
-    double cpu = 0.0;
-
-    // Compute CPU usage from consecutive samples
-    if (i > 0) {
-      const double dt = samples_[i].time - samples_[i - 1].time;
-
-      if (dt > 0.0) {
-        cpu = 100.0 *
-          (static_cast<double>(samples_[i].cpu_ticks - samples_[i - 1].cpu_ticks) /
-          static_cast<double>(clk_tck_)) /
-          dt;
-      }
+  // Compute CPU from last two samples
+  double cpu = 0.0;
+  const std::size_t n = samples_.size();
+  if (n >= 2) {
+    const double dt = samples_[n - 1].time - samples_[n - 2].time;
+    if (dt > 0.0) {
+      cpu = 100.0 *
+        (static_cast<double>(samples_[n - 1].cpu_ticks - samples_[n - 2].cpu_ticks) /
+        static_cast<double>(clk_tck_)) / dt;
     }
-
-    file << samples_[i].time << ',' << cpu << ',' << samples_[i].memory << ',' <<
-      samples_[i].obstacle_distance << ','
-         << samples_[i].cmd_vel_frequency << ',' << samples_[i].distance_travelled << '\n';
   }
 
-  RCLCPP_INFO(get_logger(), "Saved %zu samples to '%s'", samples_.size(), output_file_.c_str());
+  // Append to file immediately
+  std::ofstream file(output_file_, std::ios::app);
+  if (file.is_open()) {
+    file << sample.time << ',' << cpu << ',' << sample.memory << ','
+         << sample.obstacle_distance << ',' << sample.cmd_vel_frequency << ','
+         << sample.distance_travelled << '\n';
+  } else {
+    RCLCPP_WARN(get_logger(), "Cannot append to output file '%s'", output_file_.c_str());
+  }
 }
 
 bool BenchmarkEvaluator::send_goal()
 {
   if (navigation_ == "nav2") {
-    if (!nav2_client_->wait_for_action_server(5s)) {
-      RCLCPP_ERROR(get_logger(), "NavigateToPose action server not available");
+    if (!nav2_client_->action_server_is_ready()) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "NavigateToPose action server not available");
+
       return false;
     }
 
@@ -325,6 +331,10 @@ bool BenchmarkEvaluator::send_goal()
         nav2_goal_success_ = result.code == rclcpp_action::ResultCode::SUCCEEDED;
       };
 
+    RCLCPP_INFO(get_logger(), "Sending nav2 goal to waypoint %zu (cycle %zu/%zu): [%.2f, %.2f]",
+      current_waypoint_index_, current_cycle_ + 1, total_cycles_,
+      waypoints_[current_waypoint_index_].pose.position.x,
+      waypoints_[current_waypoint_index_].pose.position.y);
     nav2_client_->async_send_goal(goal, options);
     return true;
   }
