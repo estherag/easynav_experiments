@@ -1,6 +1,6 @@
 benchmark_evaluator:
   ros__parameters:
-    cycles: 20
+    cycles: 3
     frame_id: map
 
     waypoints:

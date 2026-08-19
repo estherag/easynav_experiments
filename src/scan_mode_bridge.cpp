@@ -17,27 +17,32 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <fstream>
 #include <string>
 #include <utility>
-#include <fstream>
 
 namespace easynav_experiments
 {
 
 namespace
 {
+
 constexpr const char * mode_to_string(ScanModeBridge::Mode mode)
 {
   switch (mode) {
     case ScanModeBridge::Mode::BRIDGE:
       return "BRIDGE";
+
     case ScanModeBridge::Mode::BLOCKED:
       return "BLOCKED";
+
     default:
       return "UNKNOWN";
   }
 }
+
 }  // namespace
+
 
 ScanModeBridge::ScanModeBridge(const rclcpp::NodeOptions & options)
 : rclcpp::Node("scan_mode_bridge", options)
@@ -47,6 +52,7 @@ ScanModeBridge::ScanModeBridge(const rclcpp::NodeOptions & options)
 
   declare_parameter("stop_lin_eps", stop_lin_eps_);
   get_parameter("stop_lin_eps", stop_lin_eps_);
+
   declare_parameter("stop_ang_eps", stop_ang_eps_);
   get_parameter("stop_ang_eps", stop_ang_eps_);
 
@@ -54,9 +60,12 @@ ScanModeBridge::ScanModeBridge(const rclcpp::NodeOptions & options)
   get_parameter("latency_output_file", latency_output_file_);
 
   if (!std::isfinite(dist_blocked_) || dist_blocked_ < 0.0f) {
-    RCLCPP_WARN(get_logger(), "Invalid parameter dist_blocked=%.6f; using default 0.05",
-        dist_blocked_);
-    dist_blocked_ = 0.35f;
+    RCLCPP_WARN(
+      get_logger(),
+      "Invalid parameter dist_blocked=%.6f; using default 0.05",
+      dist_blocked_);
+
+    dist_blocked_ = 0.05f;
   }
 
   scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>(
@@ -64,20 +73,21 @@ ScanModeBridge::ScanModeBridge(const rclcpp::NodeOptions & options)
       rclcpp::QoS(rclcpp::SensorDataQoS()).reliable());
 
   scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-      "scan_raw", rclcpp::SensorDataQoS(),
-      std::bind(&ScanModeBridge::on_scan, this, std::placeholders::_1));
+    "scan_raw", rclcpp::SensorDataQoS(),
+    std::bind(&ScanModeBridge::on_scan, this, std::placeholders::_1));
 
   cmd_vel_sub_ = create_subscription<geometry_msgs::msg::TwistStamped>(
-      "cmd_vel", rclcpp::SystemDefaultsQoS(),
-      std::bind(&ScanModeBridge::on_cmd_vel, this, std::placeholders::_1));
+    "cmd_vel", rclcpp::SystemDefaultsQoS(),
+    std::bind(&ScanModeBridge::on_cmd_vel, this, std::placeholders::_1));
 
   trigger_srv_ = create_service<std_srvs::srv::Trigger>(
-      "trigger_mode",
-      std::bind(&ScanModeBridge::on_trigger_mode, this, std::placeholders::_1,
+    "trigger_mode",
+    std::bind(&ScanModeBridge::on_trigger_mode, this, std::placeholders::_1,
       std::placeholders::_2));
 
   RCLCPP_INFO(get_logger(), "Started in mode: %s", mode_to_string(mode_));
 }
+
 
 void ScanModeBridge::on_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
@@ -92,10 +102,14 @@ void ScanModeBridge::on_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 
   {
     std::scoped_lock<std::mutex> lock(measurement_mutex_);
+
     if (stop_measurement_active_ && !stop_measurement_started_) {
       stop_measurement_start_time_ = steady_clock_.now();
       stop_measurement_started_ = true;
-      RCLCPP_INFO(get_logger(), "Stop-timer started (mode=BLOCKED)");
+
+      RCLCPP_INFO(
+        get_logger(),
+        "Stop timer started (laser reached %.3f m)", dist_blocked_);
     }
   }
 
@@ -109,41 +123,55 @@ void ScanModeBridge::on_cmd_vel(const geometry_msgs::msg::TwistStamped::SharedPt
     return;
   }
 
-  std::scoped_lock<std::mutex> lock(measurement_mutex_);
-  if (mode_ != Mode::BLOCKED || !stop_measurement_active_ || !stop_measurement_started_) {
-    return;
-  }
-
   const auto & twist = msg->twist;
 
-  const double lin =
-    std::sqrt(
-      twist.linear.x * twist.linear.x +
-      twist.linear.y * twist.linear.y +
-      twist.linear.z * twist.linear.z);
+  const double lin_sq =
+    twist.linear.x * twist.linear.x +
+    twist.linear.y * twist.linear.y +
+    twist.linear.z * twist.linear.z;
 
-  const double ang =
-    std::sqrt(
-      twist.angular.x * twist.angular.x +
-      twist.angular.y * twist.angular.y +
-      twist.angular.z * twist.angular.z);
+  const double ang_sq =
+    twist.angular.x * twist.angular.x +
+    twist.angular.y * twist.angular.y +
+    twist.angular.z * twist.angular.z;
 
-  const bool stopped = (lin <= stop_lin_eps_) && (ang <= stop_ang_eps_);
+  const double stop_lin_eps_sq = stop_lin_eps_ * stop_lin_eps_;
+
+  const double stop_ang_eps_sq = stop_ang_eps_ * stop_ang_eps_;
+
+  const bool stopped = lin_sq <= stop_lin_eps_sq && ang_sq <= stop_ang_eps_sq;
+
   if (!stopped) {
     return;
   }
 
-  const auto end_time = steady_clock_.now();
-  const auto dt = end_time - stop_measurement_start_time_;
-  const int64_t dt_us = dt.nanoseconds() / 1000;
-  append_latency_sample(dt_us);
+  int64_t latency_us = 0;
 
-  RCLCPP_INFO(get_logger(),
-      "Robot stop detected after %" PRId64 " us (lin=%.4f, ang=%.4f; eps=(%.4f, %.4f))", dt_us,
-              lin, ang, stop_lin_eps_, stop_ang_eps_);
+  {
+    std::scoped_lock<std::mutex> lock(measurement_mutex_);
+    if (mode_ != Mode::BLOCKED ||
+      !stop_measurement_active_ ||
+      !stop_measurement_started_)
+    {
+      return;
+    }
 
-  stop_measurement_active_ = false;
+    const auto end_time = steady_clock_.now();
+
+    const auto dt = end_time - stop_measurement_start_time_;
+
+    latency_us = dt.nanoseconds() / 1000;
+
+    stop_measurement_active_ = false;
+  }
+
+  RCLCPP_INFO(
+    get_logger(), "Robot stop detected after %" PRId64 " us (%.3f ms)", latency_us,
+    static_cast<double>(latency_us) / 1000.0);
+
+  append_latency_sample(latency_us);
 }
+
 
 void ScanModeBridge::on_trigger_mode(
   const std::shared_ptr<std_srvs::srv::Trigger::Request>/*request*/,
@@ -153,10 +181,13 @@ void ScanModeBridge::on_trigger_mode(
 
   {
     std::scoped_lock<std::mutex> lock(measurement_mutex_);
+
     if (mode_ == Mode::BLOCKED) {
       stop_measurement_active_ = true;
       stop_measurement_started_ = false;
+
       stop_measurement_start_time_ = rclcpp::Time(0, 0, RCL_STEADY_TIME);
+
     } else {
       stop_measurement_active_ = false;
       stop_measurement_started_ = false;
@@ -165,6 +196,7 @@ void ScanModeBridge::on_trigger_mode(
 
   if (response) {
     response->success = true;
+
     response->message = std::string("Mode switched to ") + mode_to_string(mode_);
   }
 
@@ -189,18 +221,24 @@ sensor_msgs::msg::LaserScan ScanModeBridge::make_blocked(
 
 void ScanModeBridge::append_latency_sample(int64_t latency_us)
 {
-  std::ofstream file;
-  file.open(latency_output_file_, std::ios::app);
-
-  if (file.tellp() == 0) {
-    file << "latency_us,dist_blocked,stop_lin_eps,stop_ang_eps\n";
+  if (latency_output_file_.empty()) {
+    return;
   }
 
-  file   << now().seconds() << ","
-         << latency_us << ","
-         << dist_blocked_ << ","
-         << stop_lin_eps_ << ","
-         << stop_ang_eps_ << "\n";
+  std::ofstream file(latency_output_file_, std::ios::app);
+
+  if (!file.is_open()) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Failed to open latency CSV: '%s'",
+      latency_output_file_.c_str());
+    return;
+  }
+
+  file << latency_us << ","
+       << dist_blocked_ << ","
+       << stop_lin_eps_ << ","
+       << stop_ang_eps_ << "\n";
 }
 
 }  // namespace easynav_experiments

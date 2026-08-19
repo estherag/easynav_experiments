@@ -23,7 +23,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration
 
 from launch_ros.actions import Node
 
@@ -36,26 +36,15 @@ def generate_launch_description():
 
     map_file = LaunchConfiguration('map')
     params_file = LaunchConfiguration('params_file')
-    run_id = LaunchConfiguration('run_id')
     package_src_dir = Path(__file__).resolve().parent.parent
-
     results_dir = str(package_src_dir / 'results/latency')
-
-    output_file = PathJoinSubstitution([
-        results_dir,
-        PythonExpression([
-            "'latency_nav2_' + str(",
-            run_id,
-            ") + '.csv'",
-        ]),
-    ])
 
     declare_map_cmd = DeclareLaunchArgument(
         'map',
         default_value=os.path.join(
             experiments_dir,
             'maps',
-            'home2.yaml'),
+            'my-home.yaml'),
         description='Map used by Nav2 bringup',
     )
 
@@ -64,14 +53,8 @@ def generate_launch_description():
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'kobuiki.yaml'),
+            'nav2.latency.params.yaml'),
         description='Nav2 parameter file',
-    )
-
-    declare_run_id_cmd = DeclareLaunchArgument(
-        'run_id',
-        default_value='1',
-        description='Benchmark run identifier',
     )
 
     bringup_cmd = IncludeLaunchDescription(
@@ -84,34 +67,39 @@ def generate_launch_description():
             'map': map_file,
             'params_file': params_file,
             'use_composition': 'True',
-            # ADD INTRACOMMS
+            'use_intra_process_comms': 'True',
         }.items(),
+    )
+
+    output_file = os.path.join(
+        results_dir,
+        'latency_nav2.csv'
     )
 
     scan_bridge_cmd = Node(
         package='easynav_experiments',
         executable='scan_mode_bridge',
+        remappings=[
+            ('scan_raw', 'scan'),
+        ],
         parameters=[
             {
                 'latency_output_file': output_file,
-                'dist_blocked': 0.40,
+                'dist_blocked': 0.06,
             },
         ],
         output='screen',
     )
 
-    # remove spin behavior from yaml
-
     ld = LaunchDescription()
 
     ld.add_action(declare_map_cmd)
     ld.add_action(declare_params_file_cmd)
-    ld.add_action(declare_run_id_cmd)
 
     ld.add_action(scan_bridge_cmd)
     ld.add_action(
         TimerAction(
-            period=2.0,
+            period=0.0,
             actions=[bringup_cmd],
         )
     )

@@ -67,6 +67,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_srv_;
+  rclcpp::TimerBase::SharedPtr publish_timer_;
+  sensor_msgs::msg::LaserScan::SharedPtr last_scan_;
 };
 
 }  // namespace easynav_experiments

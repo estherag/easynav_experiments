@@ -1,6 +1,6 @@
 amcl:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     alpha1: 0.2
     alpha2: 0.2
     alpha3: 0.2
@@ -37,17 +37,17 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    scan_topic: scan
+    scan_topic: scan_bridged
     set_initial_pose: true
     initial_pose:
-      x: 0.00000
-      y: 0.0000000
+      x: 8.018
+      y: -0.698
       z: 0.0
-      yaw: 0.0000000
+      yaw: 3.142
 
 map_saver:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     save_map_timeout: 5.0
     free_thresh_default: 0.25
     occupied_thresh_default: 0.65
@@ -55,7 +55,7 @@ map_saver:
 
 bt_navigator:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     global_frame: map
     robot_base_frame: base_link
@@ -75,7 +75,7 @@ bt_navigator:
 
 controller_server:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     controller_frequency: 20.0
     controller_plugins: ["FollowPath"]
@@ -110,7 +110,7 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      bond_heartbeat_period: 0.5
+      bond_heartbeat_period: 0.65
       enable_stamped_cmd_vel: true
       update_frequency: 5.0
       publish_frequency: 2.0
@@ -142,9 +142,9 @@ local_costmap:
         z_voxels: 16
         max_obstacle_height: 2.0
         mark_threshold: 0
-        observation_sources: scan
+        observation_sources: scan_bridged
         scan:
-          topic: scan
+          topic: scan_bridged
           max_obstacle_height: 2.0
           clearing: true
           marking: true
@@ -161,7 +161,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      bond_heartbeat_period: 0.5
+      bond_heartbeat_period: 0.65
       enable_stamped_cmd_vel: true
       update_frequency: 1.0
       publish_frequency: 1.0
@@ -181,9 +181,9 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan
+        observation_sources: scan_bridged
         scan:
-          topic: scan
+          topic: scan_bridged
           max_obstacle_height: 2.0
           clearing: true
           marking: true
@@ -203,7 +203,7 @@ global_costmap:
 
 planner_server:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     #expected_planner_frequency: 20.0
     planner_plugins: ["GridBased"]
@@ -215,7 +215,7 @@ planner_server:
 
 smoother_server:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     smoother_plugins: ["simple_smoother"]
     simple_smoother:
@@ -226,15 +226,14 @@ smoother_server:
 
 behavior_server:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     local_costmap_topic: local_costmap/costmap_raw
     global_costmap_topic: global_costmap/costmap_raw
     local_footprint_topic: local_costmap/published_footprint
     global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins:
-      ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
     backup:
@@ -256,7 +255,7 @@ behavior_server:
 
 waypoint_follower:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     loop_rate: 20
     stop_on_failure: false
@@ -269,7 +268,7 @@ waypoint_follower:
 
 velocity_smoother:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     smoothing_frequency: 20.0
     scale_velocities: False
@@ -285,7 +284,7 @@ velocity_smoother:
 
 collision_monitor:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     base_frame_id: "base_link"
     odom_frame_id: "odom"
@@ -309,14 +308,14 @@ collision_monitor:
     observation_sources: ["scan"]
     scan:
       type: "scan"
-      topic: "scan"
+      topic: "scan_bridged"
       min_height: 0.15
       max_height: 2.0
       enabled: True
 
 docking_server:
   ros__parameters:
-    bond_heartbeat_period: 0.5
+    bond_heartbeat_period: 0.65
     enable_stamped_cmd_vel: true
     controller_frequency: 50.0
     initial_perception_timeout: 5.0

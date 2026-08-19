@@ -20,7 +20,7 @@ from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration
 
 from launch_ros.actions import Node
 
@@ -30,34 +30,21 @@ def generate_launch_description():
         'easynav_experiments')
 
     params_file = LaunchConfiguration('params_file')
-    run_id = LaunchConfiguration('run_id')
-
     package_src_dir = Path(__file__).resolve().parent.parent
 
     results_dir = str(package_src_dir / 'results/latency')
 
-    output_file = PathJoinSubstitution([
+    output_file = os.path.join(
         results_dir,
-        PythonExpression([
-            "'latency_easynav_' + str(",
-            run_id,
-            ") + '.csv'",
-        ]),
-    ])
-
+        'latency_easynav.csv'
+    )
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
         default_value=os.path.join(
             experiments_dir,
             'config',
-            'easynav.params.mppi.yaml'),
+            'easynav.latency.params.yaml'),
         description='EasyNav parameter file',
-    )
-
-    declare_run_id_cmd = DeclareLaunchArgument(
-        'run_id',
-        default_value='1',
-        description='Benchmark run identifier',
     )
 
     bringup_cmd = Node(
@@ -66,7 +53,6 @@ def generate_launch_description():
         parameters=[params_file],
         remappings=[
             ('cmd_vel_stamped', 'cmd_vel'),
-            ('scan', 'scan_bridged'),
         ],
         output='screen',
     )
@@ -77,7 +63,11 @@ def generate_launch_description():
         parameters=[
             {
                 'latency_output_file': output_file,
+                'dist_blocked': 0.06
             },
+        ],
+        remappings=[
+            ('scan_raw', 'scan'),
         ],
         output='screen',
     )
@@ -85,12 +75,11 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     ld.add_action(declare_params_file_cmd)
-    ld.add_action(declare_run_id_cmd)
 
     ld.add_action(scan_bridge_cmd)
     ld.add_action(
         TimerAction(
-            period=15.0,
+            period=10.0,
             actions=[bringup_cmd],
         )
     )
