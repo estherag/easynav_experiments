@@ -1,20 +1,6 @@
 #!/usr/bin/env python3
 
-"""
-Statistical and graphical analysis of Experiment 1.
-
-Compares run-level navigation performance between EasyNav and Nav2.
-
-Run from the repository root:
-
-    python3 scripts/analyze_experiment1.py
-
-Input:
-    results/cycle/*.csv
-
-Output:
-    results/cycle/analysis/
-"""
+"""Statistical and graphical analysis of Experiment 1."""
 
 import re
 from pathlib import Path
@@ -32,36 +18,11 @@ OUTPUT_DIR = RESULTS_DIR / "analysis"
 FRAMEWORKS = ["EasyNav", "Nav2"]
 
 METRICS = {
-    "cpu": {
-        "label": "CPU utilization",
-        "unit": "%",
-        "summary": "mean",
-        "primary": True,
-    },
-    "memory": {
-        "label": "Memory consumption",
-        "unit": "MB",
-        "summary": "mean",
-        "primary": True,
-    },
-    "cmd_vel_frequency": {
-        "label": r"$cmd\_vel$ frequency",
-        "unit": "Hz",
-        "summary": "mean",
-        "primary": False,
-    },
-    "obstacle_distance": {
-        "label": "Obstacle distance",
-        "unit": "m",
-        "summary": "mean",
-        "primary": False,
-    },
-    "distance_travelled": {
-        "label": "Distance travelled",
-        "unit": "m",
-        "summary": "final",
-        "primary": False,
-    },
+    "cpu": ("CPU utilization", "%", "mean", True),
+    "memory": ("Memory consumption", "MB", "mean", True),
+    "cmd_vel_frequency": (r"$cmd\_vel$ frequency", "Hz", "mean", False),
+    "obstacle_distance": ("Obstacle distance", "m", "mean", False),
+    "distance_travelled": ("Distance travelled", "m", "final", False),
 }
 
 REQUIRED_COLUMNS = {
@@ -74,145 +35,105 @@ REQUIRED_COLUMNS = {
 }
 
 
-def detect_framework(path: Path):
-    name = path.name.lower()
-
-    if "easynav" in name:
-        return "EasyNav"
-    if "nav2" in name:
-        return "Nav2"
-
-    return None
-
-
-def detect_run_id(path: Path):
-    match = re.search(r"_(\d+)\.csv$", path.name)
-    return int(match.group(1)) if match else None
-
-
-def load_run(path: Path) -> dict:
+def load_run(path):
     df = pd.read_csv(path)
 
     missing = REQUIRED_COLUMNS - set(df.columns)
     if missing:
-        raise ValueError(
-            f"{path}: missing columns: {sorted(missing)}"
-        )
+        raise ValueError(f"{path}: missing columns: {sorted(missing)}")
 
-    result = {}
+    name = path.name.lower()
 
-    for metric, config in METRICS.items():
-        values = pd.to_numeric(
-            df[metric],
-            errors="coerce",
-        ).dropna()
+    if "easynav" in name:
+        framework = "EasyNav"
+    elif "nav2" in name:
+        framework = "Nav2"
+    else:
+        return None
 
+    match = re.search(r"_(\d+)\.csv$", path.name)
+    run = int(match.group(1)) if match else None
+
+    result = {"framework": framework, "run": run, "file": path.name}
+
+    for metric, (_, _, summary, _) in METRICS.items():
+        values = pd.to_numeric(df[metric], errors="coerce").dropna()
         values = values[np.isfinite(values)]
 
         if values.empty:
             result[metric] = np.nan
-        elif config["summary"] == "final":
+        elif summary == "final":
             result[metric] = values.iloc[-1]
         else:
             result[metric] = values.mean()
 
-    result["framework"] = detect_framework(path)
-    result["run"] = detect_run_id(path)
-    result["file"] = path.name
-
     return result
 
 
-def load_dataset() -> pd.DataFrame:
+def load_data():
     files = sorted(RESULTS_DIR.glob("*.csv"))
 
     if not files:
-        raise FileNotFoundError(
-            f"No CSV files found in {RESULTS_DIR}"
-        )
+        raise FileNotFoundError(f"No CSV files found in {RESULTS_DIR}")
 
-    rows = []
+    runs = [load_run(path) for path in files]
+    runs = [run for run in runs if run is not None]
 
-    for path in files:
-        if detect_framework(path) is not None:
-            rows.append(load_run(path))
-
-    if not rows:
-        raise RuntimeError(
-            "No EasyNav/Nav2 benchmark CSV files were found."
-        )
+    if not runs:
+        raise RuntimeError("No EasyNav/Nav2 benchmark CSV files were found.")
 
     return (
-        pd.DataFrame(rows)
-        .sort_values(
-            ["framework", "run", "file"],
-            na_position="last",
-        )
+        pd.DataFrame(runs)
+        .sort_values(["framework", "run", "file"], na_position="last")
         .reset_index(drop=True)
     )
 
 
-def values_for(
-    data: pd.DataFrame,
-    framework: str,
-    metric: str,
-) -> np.ndarray:
-    values = (
-        data.loc[data["framework"] == framework, metric]
-        .dropna()
-        .to_numpy(dtype=float)
-    )
-
+def get_values(data, framework, metric):
+    values = data.loc[data["framework"] == framework, metric].dropna()
+    values = values.to_numpy(dtype=float)
     return values[np.isfinite(values)]
 
 
-def descriptive_statistics(data: pd.DataFrame) -> pd.DataFrame:
+def descriptive_statistics(data):
     rows = []
 
     for metric in METRICS:
         for framework in FRAMEWORKS:
-            values = values_for(data, framework, metric)
+            values = get_values(data, framework, metric)
 
             if len(values) == 0:
                 continue
 
             q1, q3 = np.percentile(values, [25, 75])
 
-            rows.append(
-                {
-                    "metric": metric,
-                    "framework": framework,
-                    "n": len(values),
-                    "mean": np.mean(values),
-                    "std": (
-                        np.std(values, ddof=1)
-                        if len(values) > 1
-                        else np.nan
-                    ),
-                    "median": np.median(values),
-                    "q1": q1,
-                    "q3": q3,
-                    "iqr": q3 - q1,
-                    "min": np.min(values),
-                    "max": np.max(values),
-                }
-            )
+            rows.append({
+                "metric": metric,
+                "framework": framework,
+                "n": len(values),
+                "mean": np.mean(values),
+                "std": np.std(values, ddof=1) if len(values) > 1 else np.nan,
+                "median": np.median(values),
+                "q1": q1,
+                "q3": q3,
+                "iqr": q3 - q1,
+                "min": np.min(values),
+                "max": np.max(values),
+            })
 
     return pd.DataFrame(rows)
 
 
-def cohens_d(x: np.ndarray, y: np.ndarray) -> float:
-    nx, ny = len(x), len(y)
-
-    if nx < 2 or ny < 2:
+def cohens_d(x, y):
+    if len(x) < 2 or len(y) < 2:
         return np.nan
 
     pooled_sd = np.sqrt(
         (
-            (nx - 1) * np.var(x, ddof=1)
-            + (ny - 1) * np.var(y, ddof=1)
+            (len(x) - 1) * np.var(x, ddof=1)
+            + (len(y) - 1) * np.var(y, ddof=1)
         )
-        / (nx + ny - 2)
+        / (len(x) + len(y) - 2)
     )
 
     if pooled_sd == 0:
@@ -221,82 +142,63 @@ def cohens_d(x: np.ndarray, y: np.ndarray) -> float:
     return (np.mean(x) - np.mean(y)) / pooled_sd
 
 
-def statistical_analysis(data: pd.DataFrame) -> pd.DataFrame:
+def statistical_analysis(data):
     rows = []
 
-    for metric, config in METRICS.items():
-        x = values_for(data, "EasyNav", metric)
-        y = values_for(data, "Nav2", metric)
+    for metric, (_, _, _, primary) in METRICS.items():
+        x = get_values(data, "EasyNav", metric)
+        y = get_values(data, "Nav2", metric)
 
         if len(x) < 2 or len(y) < 2:
             continue
 
-        test = stats.ttest_ind(
-            x,
-            y,
-            equal_var=False,
-        )
+        test = stats.ttest_ind(x, y, equal_var=False)
         ci = test.confidence_interval(0.95)
 
-        rows.append(
-            {
-                "metric": metric,
-                "primary": config["primary"],
-                "easynav_n": len(x),
-                "nav2_n": len(y),
-                "mean_difference_easynav_minus_nav2": (
-                    np.mean(x) - np.mean(y)
-                ),
-                "mean_difference_ci95_low": ci.low,
-                "mean_difference_ci95_high": ci.high,
-                "welch_p": test.pvalue,
-                "cohens_d": cohens_d(x, y),
-            }
-        )
+        rows.append({
+            "metric": metric,
+            "primary": primary,
+            "easynav_n": len(x),
+            "nav2_n": len(y),
+            "mean_difference_easynav_minus_nav2": np.mean(x) - np.mean(y),
+            "mean_difference_ci95_low": ci.low,
+            "mean_difference_ci95_high": ci.high,
+            "welch_p": test.pvalue,
+            "cohens_d": cohens_d(x, y),
+        })
 
     results = pd.DataFrame(rows)
-
     results["welch_p_holm"] = np.nan
 
-    primary_mask = results["primary"].astype(bool)
-    primary_p = results.loc[primary_mask, "welch_p"].to_numpy()
+    primary = results["primary"].astype(bool)
+    p_values = results.loc[primary, "welch_p"].to_numpy()
 
-    if len(primary_p) > 0:
-        _, adjusted_p, _, _ = multipletests(
-            primary_p,
+    if len(p_values):
+        _, adjusted, _, _ = multipletests(
+            p_values,
             alpha=0.05,
             method="holm",
         )
-        results.loc[primary_mask, "welch_p_holm"] = adjusted_p
+        results.loc[primary, "welch_p_holm"] = adjusted
 
     return results
 
 
-def load_aligned_series(
-    data: pd.DataFrame,
-    metric: str,
-) -> dict:
+def load_series(data, metric):
     result = {}
 
     for framework in FRAMEWORKS:
         files = data.loc[
-            data["framework"] == framework,
-            "file",
+            data["framework"] == framework, "file"
         ].tolist()
 
         series = []
 
-        for file in files:
-            df = pd.read_csv(RESULTS_DIR / file)
+        for filename in files:
+            df = pd.read_csv(RESULTS_DIR / filename)
 
-            time = pd.to_numeric(
-                df["time"],
-                errors="coerce",
-            )
-            values = pd.to_numeric(
-                df[metric],
-                errors="coerce",
-            )
+            time = pd.to_numeric(df["time"], errors="coerce")
+            values = pd.to_numeric(df[metric], errors="coerce")
 
             valid = (
                 time.notna()
@@ -315,31 +217,20 @@ def load_aligned_series(
         if not series:
             continue
 
-        combined = pd.concat(
-            series,
-            axis=1,
-        ).sort_index()
+        combined = pd.concat(series, axis=1).sort_index()
+        combined = combined.interpolate(method="index").ffill().bfill()
 
-        combined = (
-            combined
-            .interpolate(method="index")
-            .ffill()
-            .bfill()
-        )
-
-        result[framework] = (series, combined)
+        result[framework] = series, combined
 
     return result
 
 
-def plot_distribution(
-    data: pd.DataFrame,
-    metric: str,
-    config: dict,
-) -> None:
+def plot_distribution(data, metric):
+    label, unit, _, _ = METRICS[metric]
+
     groups = [
-        values_for(data, "EasyNav", metric),
-        values_for(data, "Nav2", metric),
+        get_values(data, "EasyNav", metric),
+        get_values(data, "Nav2", metric),
     ]
 
     fig, ax = plt.subplots(figsize=(7, 5))
@@ -359,12 +250,7 @@ def plot_distribution(
     rng = np.random.default_rng(42)
 
     for i, values in enumerate(groups, start=1):
-        jitter = rng.uniform(
-            -0.10,
-            0.10,
-            size=len(values),
-        )
-
+        jitter = rng.uniform(-0.10, 0.10, len(values))
         ax.scatter(
             np.full(len(values), i) + jitter,
             values,
@@ -374,16 +260,9 @@ def plot_distribution(
             zorder=3,
         )
 
-    ax.set_ylabel(
-        f"{config['label']} [{config['unit']}]"
-    )
-    ax.set_title(
-        f"{config['label']} — run-level observations"
-    )
-    ax.grid(
-        axis="y",
-        alpha=0.25,
-    )
+    ax.set_ylabel(f"{label} [{unit}]")
+    ax.set_title(f"{label} — run-level observations")
+    ax.grid(axis="y", alpha=0.25)
 
     fig.tight_layout()
     fig.savefig(
@@ -394,31 +273,21 @@ def plot_distribution(
     plt.close(fig)
 
 
-def plot_profile(
-    data: pd.DataFrame,
-    metric: str,
-    config: dict,
-) -> None:
+def plot_profile(data, metric):
+    label, unit, _, _ = METRICS[metric]
+
     fig, ax = plt.subplots(figsize=(9, 4))
 
-    for framework, (_, combined) in load_aligned_series(
-        data,
-        metric,
-    ).items():
+    for framework, (_, combined) in load_series(data, metric).items():
         n = combined.shape[1]
         mean = combined.mean(axis=1)
         ci = (
-            stats.t.ppf(0.975, df=n - 1)
+            stats.t.ppf(0.975, n - 1)
             * combined.std(axis=1)
             / np.sqrt(n)
         )
 
-        ax.plot(
-            mean.index,
-            mean,
-            linewidth=2.0,
-            label=framework,
-        )
+        ax.plot(mean.index, mean, linewidth=2.0, label=framework)
         ax.fill_between(
             mean.index,
             mean - ci,
@@ -427,12 +296,8 @@ def plot_profile(
         )
 
     ax.set_xlabel("Time [s]")
-    ax.set_ylabel(
-        f"{config['label']} [{config['unit']}]"
-    )
-    ax.set_title(
-        f"{config['label']} — mean ± 95% CI"
-    )
+    ax.set_ylabel(f"{label} [{unit}]")
+    ax.set_title(f"{label} — mean ± 95% CI")
     ax.grid(alpha=0.25)
     ax.legend()
 
@@ -445,17 +310,12 @@ def plot_profile(
     plt.close(fig)
 
 
-def plot_timeseries(
-    data: pd.DataFrame,
-    metric: str,
-    config: dict,
-) -> None:
+def plot_timeseries(data, metric):
+    label, unit, _, _ = METRICS[metric]
+
     fig, ax = plt.subplots(figsize=(9, 5))
 
-    for framework, (series, combined) in load_aligned_series(
-        data,
-        metric,
-    ).items():
+    for framework, (series, combined) in load_series(data, metric).items():
         for run in series:
             ax.plot(
                 run.index,
@@ -467,12 +327,7 @@ def plot_timeseries(
         mean = combined.mean(axis=1)
         std = combined.std(axis=1)
 
-        ax.plot(
-            mean.index,
-            mean,
-            linewidth=2.0,
-            label=framework,
-        )
+        ax.plot(mean.index, mean, linewidth=2.0, label=framework)
         ax.fill_between(
             mean.index,
             mean - std,
@@ -481,12 +336,8 @@ def plot_timeseries(
         )
 
     ax.set_xlabel("Time [s]")
-    ax.set_ylabel(
-        f"{config['label']} [{config['unit']}]"
-    )
-    ax.set_title(
-        f"{config['label']} — mean ± 1 std across runs"
-    )
+    ax.set_ylabel(f"{label} [{unit}]")
+    ax.set_title(f"{label} — mean ± 1 std across runs")
     ax.grid(alpha=0.25)
     ax.legend()
 
@@ -499,30 +350,18 @@ def plot_timeseries(
     plt.close(fig)
 
 
-def print_summary(
-    data: pd.DataFrame,
-    descriptive: pd.DataFrame,
-    tests: pd.DataFrame,
-) -> None:
+def print_summary(data, descriptive, tests):
     print("\nEXPERIMENT 1")
 
     print("\nRuns:")
     for framework in FRAMEWORKS:
-        n = len(data[data["framework"] == framework])
+        n = (data["framework"] == framework).sum()
         print(f"  {framework}: n = {n}")
 
     print("\nDescriptive statistics:")
     print(
         descriptive[
-            [
-                "metric",
-                "framework",
-                "n",
-                "mean",
-                "std",
-                "median",
-                "iqr",
-            ]
+            ["metric", "framework", "n", "mean", "std", "median", "iqr"]
         ].to_string(index=False)
     )
 
@@ -541,26 +380,20 @@ def print_summary(
         ].to_string(index=False)
     )
 
-    print("\nResults written to:")
-    print(f"  {OUTPUT_DIR}")
+    print(f"\nResults written to: {OUTPUT_DIR}")
 
 
-def main() -> None:
+def main():
     if not RESULTS_DIR.exists():
         raise FileNotFoundError(
             f"Results directory does not exist: {RESULTS_DIR}"
         )
 
     print(f"Reading results from: {RESULTS_DIR}")
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    data = load_dataset()
-
-    data.to_csv(
-        OUTPUT_DIR / "run_level_data.csv",
-        index=False,
-    )
+    data = load_data()
+    data.to_csv(OUTPUT_DIR / "run_level_data.csv", index=False)
 
     descriptive = descriptive_statistics(data)
     descriptive.to_csv(
@@ -574,31 +407,14 @@ def main() -> None:
         index=False,
     )
 
-    for metric, config in METRICS.items():
-        plot_distribution(
-            data,
-            metric,
-            config,
-        )
+    for metric in METRICS:
+        plot_distribution(data, metric)
+        plot_timeseries(data, metric)
 
-        plot_timeseries(
-            data,
-            metric,
-            config,
-        )
+        if METRICS[metric][3]:
+            plot_profile(data, metric)
 
-        if config["primary"]:
-            plot_profile(
-                data,
-                metric,
-                config,
-            )
-
-    print_summary(
-        data,
-        descriptive,
-        tests,
-    )
+    print_summary(data, descriptive, tests)
 
 
 if __name__ == "__main__":

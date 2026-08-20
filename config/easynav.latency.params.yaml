@@ -5,7 +5,7 @@ controller_node:
     colision_checker:
       active: true
       debug_markers: true
-      downsample_leaf_size: 0.01
+      downsample_leaf_size: 0.05
       robot_radius: 0.2
       brake_acc: 1.0
       safety_margin: 0.05
@@ -45,7 +45,7 @@ localizer_node:
     localizer_types: [costmap]
     costmap:
       rt_freq: 50.0
-      freq: 25.0
+      freq: 2.0
       reseed_freq: 1.0
       plugin: easynav_costmap_localizer/AMCLLocalizer
       num_particles: 3000
