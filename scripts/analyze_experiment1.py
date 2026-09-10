@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
+from matplotlib.lines import Line2D
 
 
 RESULTS_DIR = Path("results/cycle")
@@ -255,15 +256,22 @@ def plot_distribution(data, metric):
             "markeredgecolor": "black",
             "markersize": 5,
         },
+        medianprops={
+            "color": "gray",
+            "linewidth": 1.5,
+        },
     )
 
     rng = np.random.default_rng(42)
 
-    for i, values in enumerate(groups, start=1):
+    for i, (framework, values) in enumerate(
+        zip(FRAMEWORKS, groups), start=1
+    ):
         jitter = rng.uniform(-0.10, 0.10, len(values))
         ax.scatter(
             np.full(len(values), i) + jitter,
             values,
+            color=f"C{i - 1}",
             alpha=0.70,
             edgecolors="white",
             linewidths=0.5,
@@ -271,7 +279,36 @@ def plot_distribution(data, metric):
         )
 
     ax.set_ylabel(f"{label} [{unit}]")
-    ax.set_title(f"{label} — run-level observations")
+    # ax.set_title(f"{label} — indoor run-level observations")
+    if metric in {"cpu", "memory"}:
+        if metric == "cpu":
+            ax.set_ylim(0, 50)
+        else:
+            ax.set_ylim(100, 200)
+        ax.legend(
+            handles=[
+                Line2D(
+                    [0], [0], marker="o", color="w", label="EasyNav run",
+                    markerfacecolor="C0", markeredgecolor="white",
+                    markersize=7,
+                ),
+                Line2D(
+                    [0], [0], marker="o", color="w", label="Nav2 run",
+                    markerfacecolor="C1", markeredgecolor="white",
+                    markersize=7,
+                ),
+                Line2D(
+                    [0], [0], color="gray", label="Median",
+                    linewidth=1.5,
+                ),
+                Line2D(
+                    [0], [0], marker="D", color="w", label="Mean",
+                    markerfacecolor="black", markeredgecolor="black",
+                    markersize=6,
+                ),
+            ],
+            loc="upper left",
+        )
     ax.grid(axis="y", alpha=0.25)
 
     fig.tight_layout()
@@ -308,6 +345,8 @@ def plot_profile(data, metric):
     ax.set_xlabel("Time [s]")
     ax.set_ylabel(f"{label} [{unit}]")
     ax.set_title(f"{label} — mean ± 95% CI")
+    if metric == "cpu":
+        ax.set_ylim(0, 50)
     ax.grid(alpha=0.25)
     ax.legend()
 
@@ -348,6 +387,8 @@ def plot_timeseries(data, metric):
     ax.set_xlabel("Time [s]")
     ax.set_ylabel(f"{label} [{unit}]")
     ax.set_title(f"{label} — mean ± 1 std across runs")
+    if metric == "cpu":
+        ax.set_ylim(0, 50)
     ax.grid(alpha=0.25)
     ax.legend()
 
