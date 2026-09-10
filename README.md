@@ -97,7 +97,7 @@ All measurements are performed on the Raspberry Pi 4 onboard the robot, with the
 
 | Metric | Description | Measurement |
 | --- | --- | --- |
-| `cpu` | CPU utilization of the monitored navigation process | Computed from the change in process user + system CPU time between consecutive samples, normalized by elapsed wall-clock time |
+| `cpu` | CPU utilization of the monitored navigation process | Computed from the change in process user + system CPU time between consecutive samples, normalized by elapsed wall-clock time and number of cores|
 | `memory` | Resident memory consumption of the monitored navigation process | Read from `VmRSS` in `/proc/<pid>/status` and converted from kB to MB |
 | `obstacle_distance` | Distance to the closest detected obstacle | Minimum valid LiDAR range in each scan |
 | `cmd_vel_frequency` | Velocity-command publication frequency | Estimated from recent `cmd_vel` timestamps using a sliding window of up to 50 messages |
