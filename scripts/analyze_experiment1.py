@@ -16,6 +16,7 @@ RESULTS_DIR = Path("results/cycle")
 OUTPUT_DIR = RESULTS_DIR / "analysis"
 
 FRAMEWORKS = ["EasyNav", "Nav2"]
+CPU_CORE_COUNT = 4
 
 METRICS = {
     "cpu": ("CPU utilization", "%", "mean", True),
@@ -33,6 +34,15 @@ REQUIRED_COLUMNS = {
     "cmd_vel_frequency",
     "distance_travelled",
 }
+
+
+def metric_values(df, metric):
+    values = pd.to_numeric(df[metric], errors="coerce")
+
+    if metric == "cpu":
+        values = values / CPU_CORE_COUNT
+
+    return values
 
 
 def load_run(path):
@@ -57,7 +67,7 @@ def load_run(path):
     result = {"framework": framework, "run": run, "file": path.name}
 
     for metric, (_, _, summary, _) in METRICS.items():
-        values = pd.to_numeric(df[metric], errors="coerce").dropna()
+        values = metric_values(df, metric).dropna()
         values = values[np.isfinite(values)]
 
         if values.empty:
@@ -198,7 +208,7 @@ def load_series(data, metric):
             df = pd.read_csv(RESULTS_DIR / filename)
 
             time = pd.to_numeric(df["time"], errors="coerce")
-            values = pd.to_numeric(df[metric], errors="coerce")
+            values = metric_values(df, metric)
 
             valid = (
                 time.notna()
